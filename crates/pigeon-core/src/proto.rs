@@ -50,6 +50,8 @@ pub enum Response {
     List(Vec<Entry>),
     /// Header for a file download. `size` is the whole file size; the bytes that
     /// follow are `size - offset` long. `sha256` covers the whole file.
+    /// `offset` is the requested offset, or 0 when the requested offset was
+    /// past the end of the file (the client must then restart from scratch).
     File {
         size: u64,
         offset: u64,

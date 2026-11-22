@@ -125,6 +125,8 @@ async fn transfer_100mb_and_hash_matches() {
     assert_eq!(stats.size, size as u64);
     assert_eq!(expected, actual);
     assert_eq!(stats.sha256, expected);
+    // Loopback with relays disabled: the only possible path is direct.
+    assert_eq!(stats.route, client::Route::Direct);
     assert!(!client::part_path(&out).exists());
     shutdown(s).await;
 }
@@ -226,18 +228,23 @@ async fn stale_part_from_changed_source_is_dropped_not_kept() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn part_larger_than_source_fails_clearly() {
+async fn part_larger_than_source_restarts_from_zero() {
     let s = setup().await;
     std::fs::write(s.root.join("small.txt"), b"tiny").unwrap();
     let out = s.work.join("small.txt");
     let part = client::part_path(&out);
     std::fs::write(&part, vec![1u8; 10_000]).unwrap();
 
-    let err = within(client::get(&s.client, &s.ticket, "small.txt", &out))
+    let stats = within(client::get(&s.client, &s.ticket, "small.txt", &out))
         .await
-        .unwrap_err();
-    assert!(format!("{err:#}").contains("beyond the end"), "{err:#}");
-    assert!(!out.exists());
+        .unwrap();
+    assert_eq!(
+        stats.resumed_from, 0,
+        "a stale, too-long .part is not resumed"
+    );
+    assert_eq!(stats.received, 4);
+    assert_eq!(std::fs::read(&out).unwrap(), b"tiny");
+    assert!(!part.exists());
     shutdown(s).await;
 }
 

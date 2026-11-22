@@ -1,0 +1,88 @@
+name: binaries
+
+# Downloadable, unsigned builds of `pigeon-agent` and `pigeon` as workflow
+# artifacts. Not a release: nothing is published outside this repo.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS universal
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: add targets to the repo toolchain
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: universal
+      - name: build aarch64
+        run: cargo build --release --locked --target aarch64-apple-darwin -p pigeon-agent -p pigeon-cli
+      - name: build x86_64
+        run: cargo build --release --locked --target x86_64-apple-darwin -p pigeon-agent -p pigeon-cli
+      - name: lipo
+        run: |
+          mkdir -p dist/pigeon-macos-universal
+          for bin in pigeon-agent pigeon; do
+            lipo -create -output "dist/pigeon-macos-universal/$bin" \
+              "target/aarch64-apple-darwin/release/$bin" \
+              "target/x86_64-apple-darwin/release/$bin"
+            lipo -info "dist/pigeon-macos-universal/$bin"
+          done
+          dist/pigeon-macos-universal/pigeon --version
+          dist/pigeon-macos-universal/pigeon-agent --version
+          # Artifacts are zipped without Unix permissions; a tarball keeps +x.
+          tar -C dist -czf dist/pigeon-macos-universal.tar.gz pigeon-macos-universal
+          cd dist && shasum -a 256 pigeon-macos-universal.tar.gz pigeon-macos-universal/* | tee SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pigeon-macos-universal
+          path: |
+            dist/pigeon-macos-universal.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: build
+        run: cargo build --release --locked -p pigeon-agent -p pigeon-cli
+      - name: package
+        run: |
+          mkdir -p dist
+          cp target/release/pigeon-agent.exe target/release/pigeon.exe dist/
+          dist/pigeon.exe --version
+          dist/pigeon-agent.exe --version
+          cd dist && sha256sum pigeon-agent.exe pigeon.exe | tee SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pigeon-windows-x64
+          path: dist/
+          if-no-files-found: error

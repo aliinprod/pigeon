@@ -1,0 +1,172 @@
+name: cross-network
+
+# A real transfer between two machines on two different networks:
+# the agent runs on a GitHub macOS runner, the client on a Windows runner.
+#
+# Ticket hand-off between the two parallel jobs:
+#   agent  --upload-artifact--> pigeon-ticket-<attempt>      --poll REST API--> client
+#   client --upload-artifact--> pigeon-client-done-<attempt> --poll REST API--> agent
+# (v4 artifacts are listed by the API as soon as their upload step finishes.)
+# The ticket holds an access token: it only lives in this private repo's
+# artifacts (1-day retention) and is masked in every log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      size_mib:
+        description: "Size of the test file for the normal (auto) transfer, in MiB"
+        default: "10"
+      relay_mib:
+        description: "Size of the test file for the relay-only transfer, in MiB"
+        default: "1"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/cross-network.yml"
+      - ".github/scripts/wait-artifact.sh"
+      - ".github/scripts/transfer-check.sh"
+
+permissions:
+  contents: read
+  actions: read # list/download this run's artifacts
+
+concurrency:
+  group: cross-network-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SIZE_MIB: ${{ inputs.size_mib || '10' }}
+  # The public relay was measured at ~30 KB/s, so keep the relay-only file small.
+  RELAY_MIB: ${{ inputs.relay_mib || '1' }}
+  TICKET_ARTIFACT: pigeon-ticket-${{ github.run_attempt }}
+  DONE_ARTIFACT: pigeon-client-done-${{ github.run_attempt }}
+
+jobs:
+  agent:
+    name: agent (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: build
+        run: cargo build --release --locked -p pigeon-agent -p pigeon-cli
+      - name: create share
+        run: |
+          mkdir -p "$RUNNER_TEMP/share" "$RUNNER_TEMP/handoff"
+          head -c $((SIZE_MIB * 1024 * 1024)) /dev/urandom >"$RUNNER_TEMP/share/random.bin"
+          head -c $((RELAY_MIB * 1024 * 1024)) /dev/urandom >"$RUNNER_TEMP/share/relay.bin"
+          shasum -a 256 "$RUNNER_TEMP/share/random.bin" | cut -d' ' -f1 >"$RUNNER_TEMP/handoff/random.sha256"
+          shasum -a 256 "$RUNNER_TEMP/share/relay.bin" | cut -d' ' -f1 >"$RUNNER_TEMP/handoff/relay.sha256"
+          ls -l "$RUNNER_TEMP/share"
+          cat "$RUNNER_TEMP/handoff/"*.sha256
+      - name: start agent
+        run: |
+          # stdout carries the ticket: keep it in a file, never in the log.
+          nohup target/release/pigeon-agent share "$RUNNER_TEMP/share" \
+            >"$RUNNER_TEMP/agent.out" 2>"$RUNNER_TEMP/agent.err" &
+          echo $! >"$RUNNER_TEMP/agent.pid"
+          for _ in $(seq 60); do
+            grep -q '^ticket: ' "$RUNNER_TEMP/agent.out" && break
+            sleep 1
+          done
+          ticket=$(sed -n 's/^ticket: //p' "$RUNNER_TEMP/agent.out")
+          if [ -z "$ticket" ]; then
+            echo "::error::agent printed no ticket"
+            cat "$RUNNER_TEMP/agent.err"
+            exit 1
+          fi
+          echo "::add-mask::$ticket"
+          printf '%s\n' "$ticket" >"$RUNNER_TEMP/handoff/ticket"
+          cat "$RUNNER_TEMP/agent.err"
+      - name: publish ticket
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TICKET_ARTIFACT }}
+          path: ${{ runner.temp }}/handoff/
+          retention-days: 1
+          if-no-files-found: error
+      - name: serve until the client is done
+        run: |
+          bash .github/scripts/wait-artifact.sh "$DONE_ARTIFACT" "$RUNNER_TEMP/done" 1800
+          echo "client reported: $(cat "$RUNNER_TEMP/done/status" 2>/dev/null || echo unknown)"
+          if ! kill -0 "$(cat "$RUNNER_TEMP/agent.pid")" 2>/dev/null; then
+            echo "::error::the agent exited before the client was done"
+            exit 1
+          fi
+      - name: stop agent
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/agent.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/agent.pid")" 2>/dev/null || true
+          fi
+          echo "--- agent stderr (no secrets) ---"
+          cat "$RUNNER_TEMP/agent.err" 2>/dev/null || true
+
+  client:
+    name: client (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: build
+        run: cargo build --release --locked -p pigeon-cli
+      - name: get ticket
+        run: |
+          bash .github/scripts/wait-artifact.sh "$TICKET_ARTIFACT" "$RUNNER_TEMP/handoff" 1800
+          echo "::add-mask::$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/ticket")"
+      - name: pigeon ls
+        run: |
+          ticket=$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/ticket")
+          echo "::add-mask::$ticket"
+          target/release/pigeon.exe ls "$ticket"
+          {
+            echo "### Cross-network transfer (agent: macOS runner, client: Windows runner)"
+            echo
+            echo "| mode | route | bytes | seconds | MB/s | sha256 match |"
+            echo "|---|---|---|---|---|---|"
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: pigeon get (auto, direct if possible)
+        timeout-minutes: 8
+        working-directory: ${{ runner.temp }}
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/transfer-check.sh" \
+            "$GITHUB_WORKSPACE/target/release/pigeon.exe" handoff/ticket handoff/random.sha256 \
+            random.bin auto
+      - name: pigeon get --relay-only
+        if: success() || failure()
+        timeout-minutes: 6
+        working-directory: ${{ runner.temp }}
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/transfer-check.sh" \
+            "$GITHUB_WORKSPACE/target/release/pigeon.exe" handoff/ticket handoff/relay.sha256 \
+            relay.bin relay-only
+      - name: write done marker
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/done"
+          echo "${{ job.status }}" >"$RUNNER_TEMP/done/status"
+      - name: tell the agent we are done
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DONE_ARTIFACT }}
+          path: ${{ runner.temp }}/done/
+          retention-days: 1

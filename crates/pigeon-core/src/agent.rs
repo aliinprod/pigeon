@@ -86,7 +86,7 @@ pub async fn handle_connection(conn: Connection, share: &Share) -> Result<()> {
             write_frame(&mut send, &response).await?;
         }
         Request::Get { path, offset } => match open_for_get(&share.root, &path, offset).await {
-            Ok((file, size, sha256)) => {
+            Ok((file, size, offset, sha256)) => {
                 let header = Response::File {
                     size,
                     offset,
@@ -133,24 +133,25 @@ async fn list(root: &Path, path: &str) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
+/// Opens `path` for a download from `offset`. Returns (file positioned at the
+/// effective offset, size, effective offset, sha256). An offset past the end
+/// (e.g. a stale `.part` from a bigger, older file) restarts at 0.
 async fn open_for_get(
     root: &Path,
     path: &str,
     offset: u64,
-) -> Result<(tokio::fs::File, u64, [u8; 32])> {
+) -> Result<(tokio::fs::File, u64, u64, [u8; 32])> {
     let full = guard::resolve(root, path)?;
     let meta = tokio::fs::metadata(&full).await?;
     if !meta.is_file() {
         bail!("not a file: {path}");
     }
     let size = meta.len();
-    if offset > size {
-        bail!("offset {offset} is beyond the end of the file ({size} bytes)");
-    }
+    let offset = if offset > size { 0 } else { offset };
     let sha256 = sha256_file(full.clone()).await?;
     let mut file = tokio::fs::File::open(&full).await?;
     file.seek(std::io::SeekFrom::Start(offset)).await?;
-    Ok((file, size, sha256))
+    Ok((file, size, offset, sha256))
 }
 
 async fn send_file(mut file: tokio::fs::File, send: &mut SendStream) -> Result<()> {
