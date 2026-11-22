@@ -1,0 +1,17 @@
+[package]
+name = "pigeon-cli"
+description = "Pigeon CLI: fetch files from a Pigeon agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pigeon"
+path = "src/main.rs"
+
+[dependencies]
+pigeon-core.workspace = true
+iroh.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true

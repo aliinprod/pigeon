@@ -1,0 +1,17 @@
+[package]
+name = "pigeon-agent"
+description = "Pigeon agent: shares a folder over iroh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pigeon-agent"
+path = "src/main.rs"
+
+[dependencies]
+pigeon-core.workspace = true
+iroh.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
