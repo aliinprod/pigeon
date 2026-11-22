@@ -67,6 +67,14 @@ a { color: inherit; }
 }
 .logo--sm { width: 34px; }
 .logo--hero { width: clamp(150px, 26vw, 260px); margin-bottom: clamp(28px, 4vw, 44px); }
+/* Inline mark inside a line of text: one em tall, sits on the text like a glyph. */
+.logo--inline {
+  display: inline-block;
+  height: 1em;
+  width: calc(1em * 0.67 / 0.48);
+  vertical-align: -0.14em;
+  margin: 0 0.1em;
+}
 
 /* ---------- Header ---------- */
 .top {
@@ -85,6 +93,26 @@ a { color: inherit; }
   color: var(--paper);
 }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
+
+.top-right { display: flex; align-items: center; gap: 14px; }
+.lang {
+  display: flex; align-items: center; gap: 6px;
+  font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em;
+  color: var(--mist);
+}
+.lang a { color: var(--text-2); text-decoration: none; padding: 6px 2px; }
+.lang a:hover { color: var(--paper); }
+.lang a[aria-current="page"] { color: var(--paper); text-decoration: underline; text-decoration-color: var(--signal); text-underline-offset: 5px; text-decoration-thickness: 2px; }
+@media (max-width: 420px) {
+  .top { gap: 10px; }
+  .top-right { gap: 10px; }
+  .badge { padding: 7px 10px; gap: 6px; }
+  .wordmark { font-size: 18px; }
+  .logo--sm { width: 30px; }
+}
+
+/* Long words (Russian, Uzbek) must never push past a phone screen. */
+h1, h2, h3 { overflow-wrap: break-word; hyphens: auto; }
 
 /* ---------- Hero ---------- */
 .hero {
@@ -159,6 +187,8 @@ a { color: inherit; }
   display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between;
   font: 400 13px/1.4 var(--font-mono); color: var(--mist);
 }
+.foot a { color: var(--text-2); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.foot a:hover { color: var(--paper); text-decoration-color: var(--paper); }
 
 /* ---------- The one motion: hero fades up on load ---------- */
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
@@ -172,5 +202,3 @@ a { color: inherit; }
   .hero > * { animation: none; }
   .btn { transition: none; }
 }
-
-.emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }

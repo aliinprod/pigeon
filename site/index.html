@@ -10,6 +10,7 @@
 
   <!-- Open Graph / social cards. TODO(owner): once the domain is known, make og:url and og:image absolute (https://DOMAIN/...). -->
   <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_US">
   <meta property="og:site_name" content="Pigeon">
   <meta property="og:title" content="Pigeon: your files know the way home">
   <meta property="og:description" content="Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.">
@@ -22,6 +23,12 @@
   <meta name="twitter:description" content="Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.">
   <meta name="twitter:image" content="assets/og.png">
   <meta name="twitter:site" content="@aliinprod">
+
+  <!-- TODO(owner): make these absolute (https://DOMAIN/...) once the domain is known. -->
+  <link rel="alternate" hreflang="en" href="./">
+  <link rel="alternate" hreflang="uz" href="uz/">
+  <link rel="alternate" hreflang="ru" href="ru/">
+  <link rel="alternate" hreflang="x-default" href="./">
 
   <link rel="icon" type="image/png" sizes="180x180" href="assets/favicon.png">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -39,7 +46,16 @@
       <span class="logo logo--sm" aria-hidden="true"><img src="assets/logo.webp" alt=""></span>
       <span class="wordmark">Pigeon</span>
     </a>
-    <span class="badge"><span class="dot" aria-hidden="true"></span>Coming soon</span>
+    <div class="top-right">
+      <nav class="lang" aria-label="Language">
+        <a href="index.html" hreflang="en" lang="en" aria-current="page">EN</a>
+        <span aria-hidden="true">·</span>
+        <a href="uz/index.html" hreflang="uz" lang="uz">UZ</a>
+        <span aria-hidden="true">·</span>
+        <a href="ru/index.html" hreflang="ru" lang="ru">RU</a>
+      </nav>
+      <span class="badge"><span class="dot" aria-hidden="true"></span>Coming soon</span>
+    </div>
   </header>
 
   <main id="main">
@@ -93,7 +109,7 @@
     </section>
 
     <section class="block follow" aria-labelledby="follow-title">
-      <p class="series">Building Pigeon <span class="emoji" aria-hidden="true">🕊️</span> · Day N</p>
+      <p class="series">Building Pigeon <span class="logo logo--inline" aria-hidden="true"><img src="assets/logo.webp" alt=""></span> · Day N</p>
       <h2 id="follow-title">Watch it get built, one day at a time.</h2>
       <p class="muted">Early builds already move real files. Rough edges included.</p>
       <a class="btn btn--primary" href="https://x.com/aliinprod" rel="noopener">Follow the build on X</a>
@@ -102,7 +118,7 @@
 
   <footer class="foot">
     <span>© 2026 Pigeon</span>
-    <span>Built in public</span>
+    <span class="credits">Built by <a href="https://x.com/aliinprod" rel="noopener">@aliinprod</a> <span aria-hidden="true">·</span> <a href="https://caywriter.pages.dev/" rel="noopener">Portfolio</a></span>
   </footer>
 </body>
 </html>
