@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pigeon: ваши файлы знают дорогу домой</title>
+  <meta name="description" content="Pigeon забирает файлы с рабочего компьютера, пока вы дома. Без VPN, открытых портов и копий в облаке. Скоро. Разрабатывается открыто.">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Open Graph / social cards. TODO(owner): once the domain is known, make og:url and og:image absolute (https://DOMAIN/...). -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:site_name" content="Pigeon">
+  <meta property="og:title" content="Pigeon: ваши файлы знают дорогу домой">
+  <meta property="og:description" content="Забирайте файлы с рабочего компьютера, не выходя из дома. Без VPN, открытых портов и копий в облаке.">
+  <meta property="og:image" content="../assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Логотип Pigeon, белый геометрический голубь на чёрном, и надпись: Your files know the way home.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pigeon: ваши файлы знают дорогу домой">
+  <meta name="twitter:description" content="Забирайте файлы с рабочего компьютера, не выходя из дома. Без VPN, открытых портов и копий в облаке.">
+  <meta name="twitter:image" content="../assets/og.png">
+  <meta name="twitter:site" content="@aliinprod">
+
+  <!-- TODO(owner): make these absolute (https://DOMAIN/...) once the domain is known. -->
+  <link rel="alternate" hreflang="en" href="../">
+  <link rel="alternate" hreflang="uz" href="../uz/">
+  <link rel="alternate" hreflang="ru" href="../ru/">
+  <link rel="alternate" hreflang="x-default" href="../">
+
+  <link rel="icon" type="image/png" sizes="180x180" href="../assets/favicon.png">
+  <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body id="top">
+  <a class="skip" href="#main">Перейти к содержимому</a>
+
+  <header class="top">
+    <a class="brand" href="#top" aria-label="Pigeon, наверх">
+      <span class="logo logo--sm" aria-hidden="true"><img src="../assets/logo.webp" alt=""></span>
+      <span class="wordmark">Pigeon</span>
+    </a>
+    <div class="top-right">
+      <nav class="lang" aria-label="Язык">
+        <a href="../index.html" hreflang="en" lang="en">EN</a>
+        <span aria-hidden="true">·</span>
+        <a href="../uz/index.html" hreflang="uz" lang="uz">UZ</a>
+        <span aria-hidden="true">·</span>
+        <a href="../ru/index.html" hreflang="ru" lang="ru" aria-current="page">RU</a>
+      </nav>
+      <span class="badge"><span class="dot" aria-hidden="true"></span>Скоро</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="headline">
+      <span class="logo logo--hero"><img src="../assets/logo.webp" alt="Логотип Pigeon: геометрический голубь в полёте"></span>
+      <h1 id="headline">Ваши файлы знают дорогу домой.</h1>
+      <p class="lede">Забирайте файлы с рабочего компьютера, не выходя из дома. Без VPN, открытых портов и копий в облаке.</p>
+      <div class="actions">
+        <a class="btn btn--primary" href="https://x.com/aliinprod" rel="noopener">Следить за разработкой в X</a>
+        <a class="btn btn--ghost" href="#how">Как это работает</a>
+      </div>
+    </section>
+
+    <section class="block" id="how" aria-labelledby="how-title">
+      <h2 id="how-title" class="kicker">Как это работает</h2>
+      <ol class="steps">
+        <li>
+          <span class="num" aria-hidden="true">01</span>
+          <h3>Откройте папку на работе</h3>
+          <p>На рабочем компьютере работает небольшой агент. Он даёт доступ только к выбранным вами папкам и только на чтение.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">02</span>
+          <h3>Запросите из дома</h3>
+          <p>Приложение на домашнем ПК показывает эти папки и запрашивает нужный файл.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">03</span>
+          <h3>Файл летит прямо к вам</h3>
+          <p>Устройства соединяются напрямую, со сквозным шифрованием. Если мешает файрвол, ретранслятор передаёт байты, которые сам прочитать не может.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="block" aria-labelledby="principles-title">
+      <h2 id="principles-title" class="kicker">Принципы</h2>
+      <ul class="principles">
+        <li>
+          <h3>Файлы остаются на вашем компьютере.</h3>
+          <p>Никаких загрузок, синхронизации и копий в облаке. Домой попадает только тот файл, который вы запросили.</p>
+        </li>
+        <li>
+          <h3>Сквозное шифрование.</h3>
+          <p>Устройства связываются один раз и подтверждают себя ключами. Не нужно открывать порты или настраивать VPN на работе.</p>
+        </li>
+        <li>
+          <h3>Разработка в открытую.</h3>
+          <p>Каждый день выходит небольшая работающая часть. С честным рассказом, что сломалось и что дальше.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="block" id="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title" class="kicker">Частые вопросы</h2>
+      <div class="faq">
+        <details>
+          <summary><span class="q">Это работает только между компьютерами?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Пока да: с рабочего компьютера на домашний. В планах запрашивать файлы с телефона: сначала через Telegram-бота, потом через приложение.</p>
+        </details>
+        <details>
+          <summary><span class="q">Файлы могут лежать в любой папке?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Вы сами выбираете, какие папки открыть, и всё, что в них лежит, будет доступно. Весь диск Pigeon никогда не открывает.</p>
+        </details>
+        <details>
+          <summary><span class="q">Что делает агент на рабочем компьютере?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Это небольшая фоновая программа. Она ждёт запросов только от ваших связанных устройств, проверяет, что файл лежит в открытой папке, и отправляет его в зашифрованном виде. Файлы она не меняет, а памяти занимает совсем немного.</p>
+        </details>
+        <details>
+          <summary><span class="q">Мои файлы попадают в облако?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Нет. Файлы остаются на рабочем компьютере, к вам в зашифрованном виде приходит только запрошенный файл. Если напрямую соединиться не получается, он идёт через промежуточный сервер, который не может его прочитать.</p>
+        </details>
+        <details>
+          <summary><span class="q">Могут ли мои файлы украсть?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Файлы передаются в зашифрованном виде, поэтому любой посредник, включая промежуточный сервер, видит только бессмысленный набор данных. Запрашивать файлы могут только связанные вами устройства и только из открытых вами папок. Не оставляйте эти устройства без блокировки; потерянное устройство можно будет отключить с рабочего компьютера.</p>
+        </details>
+        <details>
+          <summary><span class="q">Рабочий компьютер должен быть включён?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Да, пока он должен быть включён и подключён к интернету. Позже хотим добавить возможность заранее отправлять домой файлы, с которыми вы работали.</p>
+        </details>
+        <details>
+          <summary><span class="q">Это бесплатно?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Pigeon пока в ранней разработке. После запуска его можно будет попробовать бесплатно, цены ещё не определены.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="block follow" aria-labelledby="follow-title">
+      <p class="series" lang="en">Building Pigeon <span class="logo logo--inline" aria-hidden="true"><img src="../assets/logo.webp" alt=""></span> · Day N</p>
+      <h2 id="follow-title">Смотрите, как Pigeon создаётся, день за днём.</h2>
+      <p class="muted">Ранние сборки уже передают настоящие файлы. Шероховатости прилагаются.</p>
+      <a class="btn btn--primary" href="https://x.com/aliinprod" rel="noopener">Следить за разработкой в X</a>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>© 2026 Pigeon</span>
+    <span class="credits">Автор: <a href="https://x.com/aliinprod" rel="noopener">@aliinprod</a> <span aria-hidden="true">·</span> <a href="https://caywriter.pages.dev/" rel="noopener">Портфолио</a></span>
+  </footer>
+</body>
+</html>

@@ -16,6 +16,7 @@ A small **Agent** runs on the Mac and shares only folders the owner picks. The *
 | Atlas (main session) | Coordinator: splits work, delegates, reports to the owner, drafts the daily X post. Writes no product code. | Every task closed with proof (CI link, test output, screenshot). |
 | Anvil (`.claude/agents/anvil.md`) | Core + Mac agent + CLI in Rust. | `cargo test` green on macOS + Windows CI; e2e transfer hash matches. |
 | Canvas (`.claude/agents/canvas.md`) | Desktop app UI (Tauri 2). Starts week 2. | App builds; screenshots of each screen attached. |
+| Plume (`.claude/agents/plume.md`) | Website in `site/` (landing, coming soon). Static HTML/CSS, no trackers. | Screenshots at 390px and 1440px; no console errors; links checked. |
 | Proof (`.claude/agents/proof.md`) | Verifier: turns risks into automated tests, reviews every PR, can reject. | All gate tests green; written verdict on the PR. |
 
 Trust ladder: owner watches every result → bots verify themselves → bots run in parallel → nightly runs. Add bots only after the previous one is trusted.

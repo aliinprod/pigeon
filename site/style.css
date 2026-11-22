@@ -1,0 +1,233 @@
+/* Pigeon: coming-soon page. Plain CSS, no build. */
+:root {
+  --bg: #000;
+  --ink: #0b0b0b;
+  --paper: #fff;
+  --signal: #ff5a1f;
+  --mist: #8a8f98;
+  --line: #2a2c30;
+  --text-2: #a7abb2; /* Mist, lifted slightly for AA on black at small sizes */
+
+  --font-head: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+
+  --gutter: clamp(20px, 5vw, 56px);
+  --maxw: 1120px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--paper);
+  font: 400 17px/1.6 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { margin: 0; font-family: var(--font-head); font-weight: 700; letter-spacing: -0.02em; }
+p { margin: 0; }
+
+a { color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.skip {
+  position: absolute; left: 12px; top: -60px;
+  padding: 10px 14px; background: var(--paper); color: var(--ink);
+  border-radius: 999px; font-weight: 600; text-decoration: none; z-index: 10;
+}
+.skip:focus { top: 12px; }
+
+/* ---------- Logo ----------
+   logo.webp is a black bird on an off-white square with lots of padding.
+   invert() turns it white-on-black; contrast() crushes the near-black
+   background to pure #000 so no box edge shows. The wrapper crops the padding. */
+.logo {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 0.67 / 0.48;
+}
+.logo img {
+  position: absolute;
+  width: 149.25%;          /* 1 / 0.67 */
+  left: -25.37%;           /* 0.17 / 0.67 */
+  top: -43.75%;            /* 0.21 / 0.48 */
+  max-width: none;
+  filter: invert(1) contrast(1.35);
+}
+.logo--sm { width: 34px; }
+.logo--hero { width: clamp(150px, 26vw, 260px); margin-bottom: clamp(28px, 4vw, 44px); }
+/* Inline mark inside a line of text: one em tall, sits on the text like a glyph. */
+.logo--inline {
+  display: inline-block;
+  height: 1em;
+  width: calc(1em * 0.67 / 0.48);
+  vertical-align: -0.14em;
+  margin: 0 0.1em;
+}
+
+/* ---------- Header ---------- */
+.top {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 22px var(--gutter);
+}
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.wordmark { font: 700 20px/1 var(--font-head); letter-spacing: -0.02em; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--line); border-radius: 999px;
+  font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--paper);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
+
+.top-right { display: flex; align-items: center; gap: 14px; }
+.lang {
+  display: flex; align-items: center; gap: 6px;
+  font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em;
+  color: var(--mist);
+}
+.lang a { color: var(--text-2); text-decoration: none; padding: 6px 2px; }
+.lang a:hover { color: var(--paper); }
+.lang a[aria-current="page"] { color: var(--paper); text-decoration: underline; text-decoration-color: var(--signal); text-underline-offset: 5px; text-decoration-thickness: 2px; }
+@media (max-width: 420px) {
+  .top { gap: 10px; }
+  .top-right { gap: 10px; }
+  .badge { padding: 7px 10px; gap: 6px; }
+  .wordmark { font-size: 18px; }
+  .logo--sm { width: 30px; }
+}
+
+/* Long words (Russian, Uzbek) must never push past a phone screen. */
+h1, h2, h3 { overflow-wrap: break-word; hyphens: auto; }
+
+/* ---------- Hero ---------- */
+.hero {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: clamp(56px, 11vw, 140px) var(--gutter) clamp(72px, 12vw, 160px);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.hero h1 {
+  font-size: clamp(44px, 8.4vw, 104px);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  max-width: 11ch;
+  text-wrap: balance;
+}
+.lede {
+  margin-top: clamp(22px, 3vw, 32px);
+  max-width: 34ch;
+  font-size: clamp(18px, 2vw, 22px);
+  line-height: 1.45;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+.actions { margin-top: 40px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 50px; padding: 0 26px;
+  border-radius: 999px;
+  font: 600 16px/1 var(--font-body);
+  text-decoration: none;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.btn--primary { background: var(--paper); color: var(--ink); }
+.btn--primary:hover { background: #e7e7e7; }
+.btn--ghost { border: 1px solid var(--line); color: var(--paper); }
+.btn--ghost:hover { border-color: var(--paper); }
+
+/* ---------- Sections ---------- */
+.block {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: clamp(56px, 8vw, 104px) var(--gutter);
+  border-top: 1px solid var(--line);
+}
+.kicker {
+  font: 500 13px/1 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--mist);
+  margin-bottom: clamp(32px, 4vw, 48px);
+}
+
+.steps, .principles { list-style: none; margin: 0; padding: 0; display: grid; gap: clamp(36px, 4vw, 48px); }
+@media (min-width: 820px) {
+  .steps, .principles { grid-template-columns: repeat(3, 1fr); }
+}
+.steps h3, .principles h3 { font-size: clamp(22px, 2.2vw, 26px); line-height: 1.2; margin-bottom: 12px; }
+.steps p, .principles p { color: var(--text-2); max-width: 34ch; }
+.num {
+  display: block; margin-bottom: 18px;
+  font: 500 14px/1 var(--font-mono); color: var(--signal);
+}
+
+/* ---------- FAQ (native details/summary, no JS) ---------- */
+.faq { max-width: 820px; border-bottom: 1px solid var(--line); }
+.faq details { border-top: 1px solid var(--line); }
+.faq summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 22px 0;
+  font: 500 clamp(18px, 2vw, 21px)/1.35 var(--font-head);
+  letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary:hover .q { color: var(--text-2); }
+.faq .q { min-width: 0; transition: color .15s ease; }
+/* Calm +/- : two thin bars; the vertical one folds flat when open. */
+.faq .ind { position: relative; flex: none; width: 14px; height: 14px; }
+.faq .ind::before, .faq .ind::after {
+  content: ""; position: absolute; left: 0; top: 6px;
+  width: 14px; height: 2px; border-radius: 1px; background: var(--mist);
+  transition: transform .2s ease, background-color .15s ease;
+}
+.faq .ind::after { transform: rotate(90deg); }
+.faq details[open] .ind::after { transform: rotate(0deg); }
+.faq details[open] .ind::before, .faq details[open] .ind::after,
+.faq summary:hover .ind::before, .faq summary:hover .ind::after { background: var(--paper); }
+.faq details p { color: var(--text-2); max-width: 62ch; padding: 0 38px 26px 0; }
+
+/* ---------- Follow ---------- */
+.follow { text-align: center; display: flex; flex-direction: column; align-items: center; }
+.series { font: 500 14px/1.4 var(--font-mono); color: var(--mist); margin-bottom: 20px; }
+.follow h2 { font-size: clamp(32px, 4.6vw, 56px); line-height: 1.05; letter-spacing: -0.035em; max-width: 16ch; text-wrap: balance; }
+.muted { color: var(--text-2); margin: 20px 0 36px; }
+
+/* ---------- Footer ---------- */
+.foot {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 28px var(--gutter) 40px;
+  border-top: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between;
+  font: 400 13px/1.4 var(--font-mono); color: var(--mist);
+}
+.foot a { color: var(--text-2); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.foot a:hover { color: var(--paper); text-decoration-color: var(--paper); }
+
+/* ---------- The one motion: hero fades up on load ---------- */
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.hero > * { animation: rise .7s cubic-bezier(.2,.7,.2,1) both; }
+.hero > :nth-child(2) { animation-delay: .08s; }
+.hero > :nth-child(3) { animation-delay: .16s; }
+.hero > :nth-child(4) { animation-delay: .24s; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .hero > * { animation: none; }
+  .btn { transition: none; }
+  .faq .q, .faq .ind::before, .faq .ind::after { transition: none; }
+}

@@ -5,3 +5,5 @@
 .env
 .claude/settings.local.json
 /tmp-e2e
+
+/site/_screenshots

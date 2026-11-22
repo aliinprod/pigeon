@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pigeon: your files know the way home</title>
+  <meta name="description" content="Pigeon fetches files from your work computer while you're at home. No VPN, no open ports, no cloud copy. Coming soon, built in public.">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Open Graph / social cards. TODO(owner): once the domain is known, make og:url and og:image absolute (https://DOMAIN/...). -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="Pigeon">
+  <meta property="og:title" content="Pigeon: your files know the way home">
+  <meta property="og:description" content="Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.">
+  <meta property="og:image" content="assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Pigeon logo, a white geometric pigeon on black, with the line: Your files know the way home.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pigeon: your files know the way home">
+  <meta name="twitter:description" content="Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.">
+  <meta name="twitter:image" content="assets/og.png">
+  <meta name="twitter:site" content="@aliinprod">
+
+  <!-- TODO(owner): make these absolute (https://DOMAIN/...) once the domain is known. -->
+  <link rel="alternate" hreflang="en" href="./">
+  <link rel="alternate" hreflang="uz" href="uz/">
+  <link rel="alternate" hreflang="ru" href="ru/">
+  <link rel="alternate" hreflang="x-default" href="./">
+
+  <link rel="icon" type="image/png" sizes="180x180" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body id="top">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <a class="brand" href="#top" aria-label="Pigeon, back to top">
+      <span class="logo logo--sm" aria-hidden="true"><img src="assets/logo.webp" alt=""></span>
+      <span class="wordmark">Pigeon</span>
+    </a>
+    <div class="top-right">
+      <nav class="lang" aria-label="Language">
+        <a href="index.html" hreflang="en" lang="en" aria-current="page">EN</a>
+        <span aria-hidden="true">·</span>
+        <a href="uz/index.html" hreflang="uz" lang="uz">UZ</a>
+        <span aria-hidden="true">·</span>
+        <a href="ru/index.html" hreflang="ru" lang="ru">RU</a>
+      </nav>
+      <span class="badge"><span class="dot" aria-hidden="true"></span>Coming soon</span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="headline">
+      <span class="logo logo--hero"><img src="assets/logo.webp" alt="Pigeon logo: a geometric pigeon in flight"></span>
+      <h1 id="headline">Your files know the way home.</h1>
+      <p class="lede">Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.</p>
+      <div class="actions">
+        <a class="btn btn--primary" href="https://x.com/aliinprod" rel="noopener">Follow the build on X</a>
+        <a class="btn btn--ghost" href="#how">How it works</a>
+      </div>
+    </section>
+
+    <section class="block" id="how" aria-labelledby="how-title">
+      <h2 id="how-title" class="kicker">How it works</h2>
+      <ol class="steps">
+        <li>
+          <span class="num" aria-hidden="true">01</span>
+          <h3>Share a folder at work</h3>
+          <p>A small agent runs on your work computer and shares only the folders you pick. Read&#8209;only.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">02</span>
+          <h3>Ask from home</h3>
+          <p>The app on your home PC lists those folders and asks for the file you need.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">03</span>
+          <h3>It flies straight to you</h3>
+          <p>The two connect directly, encrypted end to end. If a firewall blocks that, a relay forwards bytes it cannot read.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="block" aria-labelledby="principles-title">
+      <h2 id="principles-title" class="kicker">Principles</h2>
+      <ul class="principles">
+        <li>
+          <h3>Your files stay on your machine.</h3>
+          <p>No upload, no sync, no cloud copy. Only the file you fetch lands at home.</p>
+        </li>
+        <li>
+          <h3>Encrypted end to end.</h3>
+          <p>Devices pair once and prove who they are with keys. No ports to open, no VPN to set up at work.</p>
+        </li>
+        <li>
+          <h3>Built in public.</h3>
+          <p>Every day ships a small, working slice, with what broke and what's next.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="block" id="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title" class="kicker">FAQ</h2>
+      <div class="faq">
+        <details>
+          <summary><span class="q">Is it only computer to computer?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Today, yes: from your work computer to your home computer. Asking for a file from your phone is planned, first through a Telegram bot, later a phone app.</p>
+        </details>
+        <details>
+          <summary><span class="q">Can my files be in any folder?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>You choose which folders to share, and everything inside them is available. Pigeon never opens your whole disk.</p>
+        </details>
+        <details>
+          <summary><span class="q">What does the agent on my work computer do?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>It's a small background app. It waits for requests from your own paired devices, checks that the file is inside a shared folder, then sends it encrypted. It doesn't change your files and uses very little memory.</p>
+        </details>
+        <details>
+          <summary><span class="q">Do my files go to a cloud?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>No. Your files stay on your work computer; only the file you ask for travels to you, encrypted. If a direct connection isn't possible, it passes through a relay server that cannot read it.</p>
+        </details>
+        <details>
+          <summary><span class="q">Can someone steal my files?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Files travel encrypted, so anyone in between, the relay included, sees only scrambled data. Only devices you paired can ask for files, and only from the folders you shared. Keep your paired devices locked; you'll be able to remove a lost device from your work computer.</p>
+        </details>
+        <details>
+          <summary><span class="q">Does my work computer need to be on?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Yes, for now it has to be on and online. Later we'd like to send the files you worked on home ahead of time.</p>
+        </details>
+        <details>
+          <summary><span class="q">Is it free?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Pigeon is in early development. It will be free to try when it launches; pricing isn't decided yet.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="block follow" aria-labelledby="follow-title">
+      <p class="series">Building Pigeon <span class="logo logo--inline" aria-hidden="true"><img src="assets/logo.webp" alt=""></span> · Day N</p>
+      <h2 id="follow-title">Watch it get built, one day at a time.</h2>
+      <p class="muted">Early builds already move real files. Rough edges included.</p>
+      <a class="btn btn--primary" href="https://x.com/aliinprod" rel="noopener">Follow the build on X</a>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>© 2026 Pigeon</span>
+    <span class="credits">Built by <a href="https://x.com/aliinprod" rel="noopener">@aliinprod</a> <span aria-hidden="true">·</span> <a href="https://caywriter.pages.dev/" rel="noopener">Portfolio</a></span>
+  </footer>
+</body>
+</html>
