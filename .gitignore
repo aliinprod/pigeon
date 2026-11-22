@@ -7,3 +7,9 @@
 /tmp-e2e
 
 /site/_screenshots
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example

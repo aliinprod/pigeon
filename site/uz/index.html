@@ -8,27 +8,27 @@
   <meta name="theme-color" content="#000000">
   <meta name="color-scheme" content="dark">
 
-  <!-- Open Graph / social cards. TODO(owner): once the domain is known, make og:url and og:image absolute (https://DOMAIN/...). -->
+  <!-- Open Graph / social cards. -->
   <meta property="og:type" content="website">
   <meta property="og:locale" content="uz_UZ">
   <meta property="og:site_name" content="Pigeon">
   <meta property="og:title" content="Pigeon: fayllaringiz uyga yo‘lni o‘zi topadi">
   <meta property="og:description" content="Ish kompyuteringizdagi fayllarni uydan turib oling. VPN’siz, port ochmasdan va bulutga yuklamasdan.">
-  <meta property="og:image" content="../assets/og.png">
+  <meta property="og:image" content="https://flypigeon.pages.dev/assets/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Pigeon logotipi, qora fonda oq geometrik kaptar va yozuv: Your files know the way home.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Pigeon: fayllaringiz uyga yo‘lni o‘zi topadi">
   <meta name="twitter:description" content="Ish kompyuteringizdagi fayllarni uydan turib oling. VPN’siz, port ochmasdan va bulutga yuklamasdan.">
-  <meta name="twitter:image" content="../assets/og.png">
+  <meta name="twitter:image" content="https://flypigeon.pages.dev/assets/og.png">
   <meta name="twitter:site" content="@aliinprod">
 
-  <!-- TODO(owner): make these absolute (https://DOMAIN/...) once the domain is known. -->
-  <link rel="alternate" hreflang="en" href="../">
-  <link rel="alternate" hreflang="uz" href="../uz/">
-  <link rel="alternate" hreflang="ru" href="../ru/">
-  <link rel="alternate" hreflang="x-default" href="../">
+
+  <link rel="alternate" hreflang="en" href="https://flypigeon.pages.dev/">
+  <link rel="alternate" hreflang="uz" href="https://flypigeon.pages.dev/uz/">
+  <link rel="alternate" hreflang="ru" href="https://flypigeon.pages.dev/ru/">
+  <link rel="alternate" hreflang="x-default" href="https://flypigeon.pages.dev/">
 
   <link rel="icon" type="image/png" sizes="180x180" href="../assets/favicon.png">
   <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
@@ -121,15 +121,19 @@
         </details>
         <details>
           <summary><span class="q">Ish kompyuterimdagi dastur nima qiladi?</span><span class="ind" aria-hidden="true"></span></summary>
-          <p>Bu orqa fonda ishlaydigan kichik dastur. U faqat o‘zingiz ulagan qurilmalardan kelgan so‘rovlarni kutadi, fayl tanlangan papkada ekanini tekshiradi va uni shifrlangan holda yuboradi. Fayllaringizni o‘zgartirmaydi va juda kam xotira ishlatadi.</p>
+          <p>Bu orqa fonda ishlaydigan kichik dastur. U faqat siz ulagan qurilmalarga javob beradi, so‘ralgan fayl tanlangan papkada ekanini tekshiradi va uni shifrlangan holda yuboradi; fayllaringizni hech qachon o‘zgartirmaydi. Testlarimiz tanlangan papkadan tashqaridagi faylga yetib olishning 20 dan ortiq usulini (masalan, ../) sinab ko‘radi va har bir yangilanish qabul qilinishidan oldin dastur ularning hammasini rad etishi shart.</p>
         </details>
         <details>
           <summary><span class="q">Fayllarim bulutga yuklanadimi?</span><span class="ind" aria-hidden="true"></span></summary>
-          <p>Yo‘q. Fayllar ish kompyuteringizda qoladi, sizga faqat so‘ragan faylingiz shifrlangan holda keladi. To‘g‘ridan-to‘g‘ri ulanib bo‘lmasa, fayl oraliq server orqali o‘tadi, lekin server uning ichini ko‘ra olmaydi.</p>
+          <p>Yo‘q. Fayllar ish kompyuteringizda qoladi, sizga faqat so‘ragan faylingiz shifrlangan holda keladi. To‘g‘ridan-to‘g‘ri ulanib bo‘lmasa, fayl oraliq server orqali o‘tadi, lekin server faqat shifrlangan ma’lumotni ko‘radi. Turli tarmoqlardagi Mac va Windows kompyuter o‘rtasidagi haqiqiy sinovda 10 MB fayl to‘g‘ridan-to‘g‘ri 1 soniyadan tezroq yetib keldi, oraliq server orqali esa sekinroq, lekin xuddi shunday butun holda keldi.</p>
         </details>
         <details>
           <summary><span class="q">Fayllarimni kimdir o‘g‘irlab olishi mumkinmi?</span><span class="ind" aria-hidden="true"></span></summary>
-          <p>Fayllar yo‘lda shifrlangan holda boradi, oradagi hech kim, hatto oraliq server ham ularni o‘qiy olmaydi. Faqat siz ulagan qurilmalar fayl so‘ray oladi, u ham faqat siz tanlagan papkalardan. Ulangan qurilmalaringizni qulflab yuring; biror qurilma yo‘qolsa, uni ish kompyuteringizdan o‘chirib qo‘yish mumkin bo‘ladi.</p>
+          <p>Fayllar yo‘lda shifrlangan holda (TLS 1.3) boradi, oradagi hech kim, hatto oraliq server ham ularni o‘qiy olmaydi. Fayl so‘ray oladigan yagona qurilmalar siz ulagan, har biri o‘z kalitiga ega qurilmalardir; testlarimiz har bir yangilanishda noto‘g‘ri kalit va begonalardan kelgan haddan tashqari katta xabarlar bilan kirib ko‘rishga urinadi. Ulangan qurilmalaringizni qulflab yuring; biror qurilma yo‘qolsa, uni ish kompyuteringizdan o‘chirib qo‘yish mumkin bo‘ladi.</p>
+        </details>
+        <details>
+          <summary><span class="q">Xavfsiz ekanini qayerdan bilasiz?</span><span class="ind" aria-hidden="true"></span></summary>
+          <p>Har bir yangilanish qabul qilinishidan oldin Mac va Windows’da 40 ga yaqin avtomatik testdan o‘tadi: ular orasida buzib kirishga urinadigan va dasturga minglab tasodifiy ma’lumot yuboradigan testlar bor. Har bir fayl yetib kelganda barmoq izi (SHA-256) bilan tekshiriladi; birorta bayt farq qilsa, fayl qabul qilinmaydi. Loyihada alohida xavfsizlik tahlili (xavflar ro‘yxati va 28 ta xavfsizlik talabi) bor, har bir yangilanishda zaif kutubxonalar va tasodifan ochilib qolgan maxfiy kalitlar tekshiriladi. Pigeon hali erta bosqichda va mustaqil auditdan o‘tmagan.</p>
         </details>
         <details>
           <summary><span class="q">Ish kompyuterim yoniq turishi kerakmi?</span><span class="ind" aria-hidden="true"></span></summary>
