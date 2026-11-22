@@ -61,6 +61,16 @@ jobs:
         run: cargo build --release --locked -p pigeon-agent -p pigeon-cli
       - name: create share
         run: |
+          # Inputs reach bash arithmetic below, which would evaluate
+          # e.g. `a[$(cmd)]`: accept plain numbers in a sane range only.
+          for v in "$SIZE_MIB" "$RELAY_MIB"; do
+            case "$v" in
+              '' | *[!0-9]* | 0*) echo "::error::sizes must be whole MiB without leading zeros"; exit 1 ;;
+            esac
+            if [ "${#v}" -gt 4 ] || [ "$v" -gt 1024 ]; then
+              echo "::error::size $v MiB is above the 1024 MiB limit"; exit 1
+            fi
+          done
           mkdir -p "$RUNNER_TEMP/share" "$RUNNER_TEMP/handoff"
           head -c $((SIZE_MIB * 1024 * 1024)) /dev/urandom >"$RUNNER_TEMP/share/random.bin"
           head -c $((RELAY_MIB * 1024 * 1024)) /dev/urandom >"$RUNNER_TEMP/share/relay.bin"
