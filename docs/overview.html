@@ -1,0 +1,312 @@
+<title>Pigeon</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one calm column. Simple 3-station picture first, stories second, team + plan after, tech details folded away. */
+:root{
+  --bg:#F3F6F6; --surface:#FFFFFF; --ink:#13232A; --muted:#5A6B71; --line:#C9D5D8;
+  --accent:#0F7C8C; --accent-soft:#DDF0F2; --sun:#C97F00; --sun-soft:#FBF0D9; --ok:#2E8B57;
+  --display:"Unbounded","Segoe UI",system-ui,sans-serif;
+  --body:"Manrope","Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0D1719; --surface:#142326; --ink:#E4EEF0; --muted:#8FA4AA; --line:#2A3E43;
+  --accent:#3CC3D4; --accent-soft:#12363C; --sun:#F2B33D; --sun-soft:#3A2D10; --ok:#5CC98A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0D1719; --surface:#142326; --ink:#E4EEF0; --muted:#8FA4AA; --line:#2A3E43;
+  --accent:#3CC3D4; --accent-soft:#12363C; --sun:#F2B33D; --sun-soft:#3A2D10; --ok:#5CC98A; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15.5px;line-height:1.6}
+.wrap{max-width:1000px;margin:0 auto;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(44px,9vw,80px);letter-spacing:-.02em}
+h2{font-size:22px}
+h3{font-size:15px}
+p{margin:0}
+code{font-family:var(--mono);font-size:.9em}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.muted{color:var(--muted)}
+section{display:flex;flex-direction:column;gap:18px}
+.sec-head{display:flex;flex-direction:column;gap:6px;max-width:66ch}
+
+.hero{display:flex;flex-direction:column;gap:14px;max-width:62ch}
+.hero .tag{font-size:21px}
+.hero .en{font-family:var(--mono);font-size:13px;color:var(--muted)}
+
+/* stations */
+.flows{display:flex;flex-wrap:wrap;gap:8px}
+.flows button{font:600 13.5px var(--body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:9px 15px;cursor:pointer}
+.flows button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+button:focus-visible,summary:focus-visible{outline:2px solid var(--sun);outline-offset:2px}
+.map{display:grid;grid-template-columns:1fr 64px 1fr 64px 1fr;align-items:stretch;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px}
+.st{border:1.5px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:6px;transition:all .25s;background:var(--bg)}
+.st .ic{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.st .ic svg{width:26px;height:26px}
+.st .who{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.st .like{font-size:13px;color:var(--muted)}
+.st.on{border-color:var(--accent);background:var(--accent-soft)}
+.st.off{opacity:.4}
+.st.sleep{border-style:dashed}
+.ar{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.ar .ln{width:100%;height:3px;border-radius:2px;background:var(--line);position:relative;overflow:hidden}
+.ar.on .ln{background:var(--accent-soft)}
+.ar.on .ln::after{content:"";position:absolute;inset:0;width:40%;background:var(--accent);border-radius:2px;animation:run 1.2s linear infinite}
+@keyframes run{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+@media (prefers-reduced-motion:reduce){.ar.on .ln::after{animation:none;width:100%}}
+.ar .cap{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-align:center}
+.direct{grid-column:1/-1;margin-top:14px;display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted)}
+.direct .ln{flex:1;height:3px;border-radius:2px;background:var(--line);position:relative;overflow:hidden}
+.direct.on .ln{background:var(--accent-soft)}
+.direct.on .ln::after{content:"";position:absolute;inset:0;width:25%;background:var(--accent);animation:run 1.6s linear infinite}
+.direct.on{color:var(--ink)}
+@media (max-width:720px){
+  .map{grid-template-columns:1fr}
+  .ar{flex-direction:row;padding:8px 0}
+  .ar .ln{width:3px;height:28px}
+  .ar.on .ln::after{width:100%;height:40%;animation:none}
+}
+.story{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px;display:grid;grid-template-columns:240px 1fr;gap:20px}
+@media (max-width:720px){.story{grid-template-columns:1fr}}
+.story h3{font-size:18px}
+.story .when{font-size:14px;color:var(--muted)}
+.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:12px;counter-reset:s}
+.steps li{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:start;counter-increment:s}
+.steps li::before{content:counter(s);width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--bg);font:600 13px var(--mono)}
+
+/* plain-language safety */
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:760px){.three{grid-template-columns:1fr}}
+.note{border-left:3px solid var(--accent);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:4px}
+
+/* bots */
+.bots{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.bots{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:460px){.bots{grid-template-columns:1fr}}
+.bot{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.bot .nm{display:flex;align-items:center;gap:10px}
+.bot .av{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-family:var(--display);background:var(--accent-soft);color:var(--accent)}
+.bot .job{font-size:13.5px}
+.bot .done{font-size:12.5px;background:var(--sun-soft);border-radius:8px;padding:8px 10px}
+.bot .stage{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.ladder{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0}
+@media (max-width:760px){.ladder{grid-template-columns:1fr 1fr;gap:8px}}
+.rung{padding:14px;border-top:3px solid var(--line);display:flex;flex-direction:column;gap:4px;font-size:13.5px}
+.rung.now{border-top-color:var(--sun)}
+.rung .k{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.rung.now .k{color:var(--sun);font-weight:600}
+.rules{display:flex;flex-wrap:wrap;gap:8px}
+.rule{font-size:13px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--surface)}
+
+/* names */
+.names{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:12px}
+@media (max-width:760px){.names{grid-template-columns:1fr}}
+.nm-card{border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.nm-card.win{border:2px solid var(--sun)}
+.nm-card .big{font-family:var(--display);font-size:22px}
+.badge{align-self:flex-start;font-family:var(--mono);font-size:11px;background:var(--sun);color:var(--bg);border-radius:5px;padding:2px 7px}
+
+/* roadmap */
+.road{display:flex;flex-direction:column;gap:0;border-left:2px solid var(--accent);margin-left:6px}
+.ms{display:grid;grid-template-columns:110px 1fr 110px;gap:14px;padding:10px 0 16px 20px;position:relative}
+.ms::before{content:"";position:absolute;left:-8px;top:15px;width:12px;height:12px;border-radius:50%;background:var(--bg);border:2px solid var(--accent)}
+.ms.final::before{background:var(--sun);border-color:var(--sun)}
+.ms .wk{font-family:var(--mono);font-size:12.5px;color:var(--accent);font-weight:600;padding-top:2px}
+.ms .own{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:right;padding-top:2px}
+@media (max-width:600px){.ms{grid-template-columns:1fr}.ms .own{text-align:left}}
+
+details{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+summary{cursor:pointer;font-family:var(--display);font-size:15px}
+.tech{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px}
+@media (max-width:760px){.tech{grid-template-columns:1fr}}
+.tech ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.dod{border:1.5px solid var(--sun);background:var(--sun-soft);border-radius:12px;padding:14px 16px;font-size:14px;margin-top:16px}
+footer{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">Loyiha · 22-noyabr 2026</span>
+  <h1>Pigeon</h1>
+  <p class="tag">Ish kompyuteridagi fayllaringiz qayerda bo'lsangiz ham sizga o'zi yetib keladi. Faylni o'zingizga Telegram orqali yuborish endi shart emas.</p>
+  <p class="en">"Your files know the way home." · Global · ochiq quriladi (build in public)</p>
+</header>
+
+<section>
+  <div class="sec-head">
+    <span class="eyebrow">Oddiy qilib aytganda</span>
+    <h2>3 ta qism, xolos</h2>
+    <p class="muted">Ofisdagi Mac'ga kichik yordamchi dastur o'rnatiladi, uydagi kompyuterga ilova. Ular bir-birini topa olsa, to'g'ridan-to'g'ri gaplashadi. Ofis firewall'i yo'l bermasa, "pochta" orqali gaplashadi. Pochta yopiq konvertni ocha olmaydi.</p>
+  </div>
+
+  <div class="flows" role="group" aria-label="Vaziyatlar">
+    <button id="s-get" data-s="get" aria-pressed="true">Fayl kerak bo'ldi</button>
+    <button id="s-off" data-s="off" aria-pressed="false">Mac o'chiq</button>
+    <button id="s-sleep" data-s="sleep" aria-pressed="false">Mac uxlab yotibdi</button>
+    <button id="s-phone" data-s="phone" aria-pressed="false">Telefondan so'rash</button>
+    <button id="s-pair" data-s="pair" aria-pressed="false">Birinchi marta ulash</button>
+  </div>
+
+  <div class="map" aria-hidden="false">
+    <div class="st" id="st-mac">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+      <span class="who">Ofisdagi Mac</span>
+      <h3>Pigeon Agent</h3>
+      <p class="like">Omborchiga o'xshaydi: fayllarni biladi, faqat ruxsat berilganini beradi.</p>
+    </div>
+    <div class="ar" id="ar-1"><div class="ln"></div><span class="cap">yopiq konvert</span></div>
+    <div class="st" id="st-relay">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 8l9 6 9-6"/></svg></div>
+      <span class="who">Internetda</span>
+      <h3>Pochta (relay)</h3>
+      <p class="like">Konvertni olib boradi, lekin ichini ko'ra olmaydi. Mac uxlasa, so'rovni saqlab turadi.</p>
+    </div>
+    <div class="ar" id="ar-2"><div class="ln"></div><span class="cap">yopiq konvert</span></div>
+    <div class="st" id="st-home">
+      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></div>
+      <span class="who">Uyda · Windows yoki telefon</span>
+      <h3>Pigeon ilova</h3>
+      <p class="like">Siz shu yerda qidirasiz, ko'rasiz va olasiz.</p>
+    </div>
+    <div class="direct" id="direct"><span>Mac</span><div class="ln"></div><span>Uy</span><span style="font-family:var(--mono);font-size:11px">to'g'ridan-to'g'ri yo'l (eng tezi)</span></div>
+  </div>
+
+  <div class="story" aria-live="polite">
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <span class="eyebrow">Vaziyat</span>
+      <h3 id="sto-t"></h3>
+      <p class="when" id="sto-w"></p>
+    </div>
+    <ol class="steps" id="sto-s"></ol>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <span class="eyebrow">Xavfsizlik oddiy tilda</span>
+    <h2>Nega bu xavfsiz</h2>
+  </div>
+  <div class="three">
+    <div class="note"><h3>Ofis eshigi yopiq qoladi</h3><p class="muted">Mac'da hech qanday "eshik" (port) ochilmaydi. Agent faqat o'zi tashqariga chiqadi, xuddi brauzer kabi.</p></div>
+    <div class="note"><h3>Pochta ichini ko'rmaydi</h3><p class="muted">Har bir fayl jo'natishdan oldin shifrlanadi. Kalit faqat sizning ikki qurilmangizda turadi.</p></div>
+    <div class="note"><h3>Faqat siz tanlagan papkalar</h3><p class="muted">Agent butun diskni emas, faqat siz ko'rsatgan papkalarni beradi. Begona qurilmani bir tugma bilan bloklaysiz.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <span class="eyebrow">Nom</span>
+    <h2>Nega Pigeon</h2>
+    <p class="muted">Ilova global bo'lgani uchun nomni dunyo bo'ylab tushunarli qilib tanladik.</p>
+  </div>
+  <div class="names">
+    <div class="nm-card win"><span class="badge">tanlandi</span><span class="big">Pigeon</span><p>Pochta kaptari xatni manzilga yetkazadi va uyga yo'lni doim topadi. Fayllaringiz ham shunday keladi. Bot buyrug'i: <code>/fetch</code>.</p></div>
+    <div class="nm-card"><span class="big">Tether</span><p class="muted">Ikki qurilma doim bog'langan. Qisqa, lekin texnikroq eshitiladi.</p></div>
+    <div class="nm-card"><span class="big">Ferry</span><p class="muted">Ikki qirg'oq orasida qatnaydigan parom. Ko'p mahsulot nomida bor.</p></div>
+  </div>
+  <p class="muted" style="font-size:12.5px">Savdo belgisi va domen hali tekshirilmagan, buni 1-haftada qilamiz.</p>
+</section>
+
+<section>
+  <div class="sec-head">
+    <span class="eyebrow">Yangi strategiya</span>
+    <h2>Jamoa: 4 ta bot, har birining bitta ishi bor</h2>
+    <p class="muted">Botlar savolga javob bermaydi, ishni bajaradi va natijani o'zi isbotlaydi. Avval bitta bot ishonchli bo'ladi, keyin qolganlari qo'shiladi.</p>
+  </div>
+  <div class="bots">
+    <div class="bot"><div class="nm"><div class="av">A</div><h3>Atlas</h3></div><span class="stage">1-haftadan · koordinator</span><p class="job">Ishni bo'ladi, botlarga topshiradi, sizga har kuni qisqa hisobot beradi. O'zi kod yozmaydi.</p><p class="done">Bajarildi: har bir vazifa isbot bilan yopilgan.</p></div>
+    <div class="bot"><div class="nm"><div class="av">A</div><h3>Anvil</h3></div><span class="stage">1-haftadan · yadro va Mac</span><p class="job">Pigeon Agent va ulanish yadrosini quradi.</p><p class="done">Bajarildi: testlar yashil, 100 MB fayl Mac'dan Windows'ga keladi va mos keladi.</p></div>
+    <div class="bot"><div class="nm"><div class="av">C</div><h3>Canvas</h3></div><span class="stage">2-haftadan · ilova</span><p class="job">Uydagi ilovani va uning ko'rinishini quradi.</p><p class="done">Bajarildi: ilova build bo'ladi va ekranlarning skrinshoti ko'rsatiladi.</p></div>
+    <div class="bot"><div class="nm"><div class="av">P</div><h3>Proof</h3></div><span class="stage">2-haftadan · tekshiruvchi</span><p class="job">Xavflarni avtomatik testlarga aylantiradi. Test o'tmasa, ish qaytariladi.</p><p class="done">Bajarildi: har kecha to'liq test yashil.</p></div>
+  </div>
+  <div class="ladder">
+    <div class="rung now"><span class="k">Hozir</span>Siz har bir natijani ko'rasiz</div>
+    <div class="rung"><span class="k">Keyin</span>Bot o'zini o'zi tekshiradi (testlar)</div>
+    <div class="rung"><span class="k">Keyin</span>Botlar parallel ishlaydi</div>
+    <div class="rung"><span class="k">Oxiri</span>Tunda o'zi ishlaydi, siz ertalab ko'rasiz</div>
+  </div>
+  <div class="rules">
+    <span class="rule">Har kuni: X'da "Day N" post (build in public)</span>
+    <span class="rule">Har kecha: to'liq test</span>
+    <span class="rule">Har hafta: kutubxonalar yangilanishini tekshirish</span>
+    <span class="rule">Doim sizning ruxsatingiz bilan: merge, reliz, server, to'lovlar</span>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <span class="eyebrow">Reja · 8 hafta</span>
+    <h2>Qadamlar</h2>
+  </div>
+  <div class="road">
+    <div class="ms"><span class="wk">1-hafta</span><div><b>Ikki kompyuter bir-birini topadi.</b> Bitta faylni olish mumkin. Dastur hali oddiy buyruq qatori.</div><span class="own">Atlas · Anvil</span></div>
+    <div class="ms"><span class="wk">2-hafta</span><div><b>Chiroyli ilova va QR bilan ulash.</b> Katta fayl uzilib qolsa, davom etadi. Real foydalanuvchilar bilan suhbatlar.</div><span class="own">Canvas · Proof</span></div>
+    <div class="ms"><span class="wk">4-hafta</span><div><b>Mac uxlasa ham so'rov yo'qolmaydi.</b> Mac uyg'onishi bilan fayl keladi. 5 ta beta foydalanuvchi.</div><span class="own">Anvil · Canvas</span></div>
+    <div class="ms"><span class="wk">6-hafta</span><div><b>Fayllar o'zi uyga keladi</b> (hot files) va telefondan <code>/fetch</code> buyrug'i ishlaydi.</div><span class="own">hamma</span></div>
+    <div class="ms final"><span class="wk">8-hafta</span><div><b>Birinchi versiya.</b> Mac va Windows uchun o'rnatuvchi, bir nechta til.</div><span class="own">Atlas</span></div>
+  </div>
+</section>
+
+<details>
+  <summary>Dasturchilar uchun: texnik tafsilotlar</summary>
+  <div class="tech">
+    <div>
+      <h3 style="margin-bottom:8px">Texnologiyalar</h3>
+      <ul>
+        <li><b>Ulanish:</b> Rust + iroh (QUIC, NAT orqali teshik ochish, relay'ga avtomatik o'tish), versiya qotirilgan</li>
+        <li><b>Pochta:</b> o'zimizning iroh-relay serverimiz, TCP 443, faqat shifrlangan baytlar</li>
+        <li><b>Mac agent:</b> menu bar .app, LaunchAgent, Spotlight (mdfind), FSEvents, har bir papkaga alohida ruxsat</li>
+        <li><b>Ilova:</b> Tauri 2 (Windows, keyin Mac/Linux)</li>
+        <li><b>Ulash:</b> QR + PAKE, Ed25519 kalitlari qotiriladi, parol yo'q</li>
+        <li><b>Telegram bot:</b> faqat boshqaruv va 50 MB gacha fayllar</li>
+      </ul>
+    </div>
+    <div>
+      <h3 style="margin-bottom:8px">Merge'dan oldin o'tishi shart bo'lgan 5 test</h3>
+      <ul>
+        <li>Yo'l fuzz testi: <code>../</code> va symlink orqali papkadan chiqib bo'lmaydi</li>
+        <li>Fayl nomlari: NFD/NFC, <code>: ? *</code>, uzun yo'llar</li>
+        <li>Faqat relay orqali: UDP yopiq, 5% yo'qotish, 300 ms</li>
+        <li>5 GB faylni davom ettirish, SHA-256 mos kelishi</li>
+        <li>Begona yoki bloklangan qurilma rad etiladi</li>
+      </ul>
+    </div>
+  </div>
+  <div class="dod"><b>v1 tayyor, qachonki:</b> uxlab, keyin uyg'ongan Mac'dan 5 GB fayl faqat relay orqali keladi, hash mos keladi va kechki test 7 kecha ketma-ket yashil bo'ladi.</div>
+</details>
+
+<footer>Pigeon · loyiha xulosasi. Ish fayllarini uyga ko'chirishdan oldin ish joyingizning IT siyosatini tekshiring.</footer>
+</div>
+
+<script>
+const S={
+  get:{t:"Fayl kerak bo'ldi",w:"Mac ofisda yoniq, siz uydasiz.",on:["mac","home"],ar:["ar-1","ar-2"],direct:true,
+    steps:["Uydagi ilovada fayl nomini yozasiz, masalan \"shartnoma\".","Mac'dagi agent faylni topadi va u ruxsat berilgan papkada ekanini tekshiradi.","Fayl to'g'ridan-to'g'ri keladi. Ofis firewall'i yo'l bermasa, pochta orqali keladi."]},
+  off:{t:"Mac o'chiq",w:"Kechqurun Mac o'chirilgan yoki elektr o'chgan.",on:["home"],off:["mac"],ar:[],direct:false,
+    steps:["Kun davomida ishlagan fayllaringizni agent eslab qoladi (buni o'zingiz yoqasiz).","Ish kuni oxirida ular shifrlangan holda uyga jimgina jo'natiladi.","Mac o'chiq bo'lsa ham, kerakli fayl allaqachon uydagi kompyuteringizda turadi."]},
+  sleep:{t:"Mac uxlab yotibdi",w:"Mac yoniq, lekin uyqu rejimida.",on:["relay","home"],sleep:["mac"],ar:["ar-2"],direct:false,
+    steps:["Siz faylni so'raysiz, Mac javob bermaydi.","So'rov pochtada yopiq konvertda kutib turadi.","Mac uyg'onishi bilan agent so'rovni o'qiydi va faylni yuboradi.","Telefoningizga \"tayyor\" xabari keladi."]},
+  phone:{t:"Telefondan so'rash",w:"Kompyuter yoningizda emas, telefon bor.",on:["mac","relay","home"],ar:["ar-1","ar-2"],direct:false,
+    steps:["Telegram botga yozasiz: /fetch hisobot.","Agent faylni topadi.","Fayl kichik bo'lsa, chatga keladi. Katta bo'lsa, ilovada ochiladigan havola keladi."]},
+  pair:{t:"Birinchi marta ulash",w:"Faqat bir marta, ofisda qilinadi.",on:["mac","relay","home"],ar:["ar-1","ar-2"],direct:false,
+    steps:["Mac'da Pigeon Agent QR kod ko'rsatadi.","Uydagi ilova yoki telefon QR'ni skanerlaydi.","Endi ikki qurilma bir-birini taniydi. Parol kerak emas, begona qurilma ulana olmaydi."]}
+};
+const $=id=>document.getElementById(id);
+function show(k){
+  const s=S[k];
+  document.querySelectorAll(".flows button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.s===k?"true":"false"));
+  ["mac","relay","home"].forEach(n=>{
+    const el=$("st-"+n);
+    el.classList.toggle("on",s.on.includes(n));
+    el.classList.toggle("off",(s.off||[]).includes(n));
+    el.classList.toggle("sleep",(s.sleep||[]).includes(n));
+  });
+  ["ar-1","ar-2"].forEach(a=>$(a).classList.toggle("on",s.ar.includes(a)));
+  $("direct").classList.toggle("on",!!s.direct);
+  $("sto-t").textContent=s.t;
+  $("sto-w").textContent=s.w;
+  $("sto-s").replaceChildren(...s.steps.map(x=>{const li=document.createElement("li");const sp=document.createElement("span");sp.textContent=x;li.appendChild(sp);return li}));
+}
+document.querySelectorAll(".flows button").forEach(b=>b.addEventListener("click",()=>show(b.dataset.s)));
+show("get");
+</script>
