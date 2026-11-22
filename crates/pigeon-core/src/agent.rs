@@ -17,11 +17,17 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::{
     guard,
-    proto::{Entry, Hello, PROTOCOL_VERSION, Request, Response, read_frame, write_frame},
+    proto::{
+        Entry, Hello, MAX_HELLO_LEN, PROTOCOL_VERSION, Request, Response, read_frame,
+        read_frame_max, write_frame,
+    },
 };
 
 /// Size of the read buffer used when streaming files.
 const CHUNK: usize = 256 * 1024;
+
+/// How long an unauthenticated peer gets to open a stream and send its hello.
+pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What an agent shares and who may access it.
 #[derive(Debug, Clone)]
@@ -54,9 +60,13 @@ pub async fn serve(endpoint: Endpoint, share: Share) -> Result<()> {
 
 /// Handles one connection: hello (auth), one request, one response.
 pub async fn handle_connection(conn: Connection, share: &Share) -> Result<()> {
-    let (mut send, mut recv) = conn.accept_bi().await?;
-
-    let hello: Hello = read_frame(&mut recv).await?;
+    let (mut send, mut recv, hello) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let (send, mut recv) = conn.accept_bi().await?;
+        let hello: Hello = read_frame_max(&mut recv, MAX_HELLO_LEN).await?;
+        anyhow::Ok((send, recv, hello))
+    })
+    .await
+    .context("handshake timed out")??;
     let token_ok: bool = hello.token[..].ct_eq(&share.token[..]).into();
     if !token_ok || hello.version != PROTOCOL_VERSION {
         write_frame(&mut send, &Response::Error("unauthorized".into())).await?;

@@ -17,6 +17,10 @@ pub const PROTOCOL_VERSION: u32 = 0;
 /// Largest frame we accept (file bytes are not framed, so this is plenty).
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
+/// Largest [`Hello`] frame we accept. The hello is read before the peer is
+/// authenticated, so it must not let a stranger make us allocate much memory.
+pub const MAX_HELLO_LEN: u32 = 256;
+
 /// First frame on every stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hello {
@@ -76,8 +80,18 @@ where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
 {
+    read_frame_max(r, MAX_FRAME_LEN).await
+}
+
+/// Reads one length-prefixed postcard frame of at most `max` bytes. The length
+/// is checked before any buffer is allocated.
+pub async fn read_frame_max<R, T>(r: &mut R, max: u32) -> Result<T>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
     let len = r.read_u32().await.context("read frame length")?;
-    if len > MAX_FRAME_LEN {
+    if len > max {
         bail!("frame too large: {len} bytes");
     }
     let mut buf = vec![0u8; len as usize];
@@ -99,5 +113,34 @@ mod tests {
         write_frame(&mut buf, &req).await.unwrap();
         let back: Request = read_frame(&mut buf.as_slice()).await.unwrap();
         assert_eq!(req, back);
+    }
+
+    #[tokio::test]
+    async fn hello_fits_and_oversized_frames_are_refused_early() {
+        let hello = Hello {
+            version: PROTOCOL_VERSION,
+            token: [0xff; 32],
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &hello).await.unwrap();
+        let back: Hello = read_frame_max(&mut buf.as_slice(), MAX_HELLO_LEN)
+            .await
+            .unwrap();
+        assert_eq!(back.token, hello.token);
+
+        // A length prefix alone (no body) claiming a big frame must be refused
+        // from the prefix, not after trying to read/allocate the body.
+        for len in [MAX_HELLO_LEN + 1, MAX_FRAME_LEN, u32::MAX] {
+            let prefix = len.to_be_bytes();
+            let err = read_frame_max::<_, Hello>(&mut prefix.as_slice(), MAX_HELLO_LEN)
+                .await
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("too large"), "{len}: {err:#}");
+        }
+        let prefix = (MAX_FRAME_LEN + 1).to_be_bytes();
+        let err = read_frame::<_, Request>(&mut prefix.as_slice())
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("too large"), "{err:#}");
     }
 }

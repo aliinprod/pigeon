@@ -141,3 +141,108 @@ mod tests {
         }
     }
 }
+
+/// Extra adversarial cases added by Proof (verifier).
+#[cfg(test)]
+mod proof_tests {
+    use super::*;
+    use std::fs;
+
+    fn setup() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("share/a")).unwrap();
+        fs::write(dir.path().join("share/a/file.txt"), b"hi").unwrap();
+        fs::write(dir.path().join("secret.txt"), b"secret").unwrap();
+        dir
+    }
+
+    #[test]
+    fn odd_components_never_escape() {
+        let dir = setup();
+        let root = dir.path().join("share");
+        let canon_root = root.canonicalize().unwrap();
+        for p in [
+            "...",
+            "..../secret.txt",
+            ".. ",
+            ".. /secret.txt",
+            "..%2fsecret.txt",
+            "%2e%2e/secret.txt",
+            "%2e%2e%5csecret.txt",
+            "a/./../../secret.txt",
+            "a//..//..//secret.txt",
+            "\u{2025}/secret.txt",
+            "\u{ff0e}\u{ff0e}/secret.txt",
+            "a/file.txt::$DATA",
+            "a/file.txt:stream",
+            r"\\?\C:\Windows",
+            r"\\.\C:\Windows",
+            r"\\?\UNC\server\share",
+            "a/C:secret.txt",
+            "//server/share",
+            "CON",
+            "NUL",
+            "a/NUL.txt",
+            "COM1",
+            "secret.txt",
+        ] {
+            match resolve(&root, p) {
+                Err(_) => {}
+                Ok(full) => assert!(
+                    full.starts_with(&canon_root),
+                    "{p:?} resolved outside the root: {}",
+                    full.display()
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn long_paths_inside_root_work() {
+        let dir = setup();
+        let root = dir.path().join("share");
+        // > 260 chars total, to exercise Windows MAX_PATH handling.
+        let mut rel = String::new();
+        for i in 0..12 {
+            if !rel.is_empty() {
+                rel.push('/');
+            }
+            rel.push_str(&format!("{i:02}-{}", "d".repeat(24)));
+        }
+        let mut full = root.clone();
+        for part in rel.split('/') {
+            full.push(part);
+        }
+        assert!(full.as_os_str().len() > 260);
+        if fs::create_dir_all(&full).is_err() {
+            eprintln!("skipping: long paths not supported by this filesystem");
+            return;
+        }
+        fs::write(full.join("deep.txt"), b"deep").unwrap();
+        let p = resolve(&root, &format!("{rel}/deep.txt")).unwrap();
+        assert_eq!(fs::read(p).unwrap(), b"deep");
+    }
+
+    /// Junctions need no admin rights on Windows, so they are the realistic
+    /// way a share root ends up pointing outside itself there.
+    #[cfg(windows)]
+    #[test]
+    fn rejects_junction_escape() {
+        let dir = setup();
+        let root = dir.path().join("share");
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("x.txt"), b"x").unwrap();
+        let link = root.join("junc");
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "mklink /J failed: {status:?}");
+        assert!(link.join("x.txt").exists());
+        assert!(resolve(&root, "junc/x.txt").is_err());
+        assert!(resolve(&root, "junc").is_err());
+    }
+}

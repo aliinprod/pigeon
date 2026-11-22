@@ -187,3 +187,106 @@ async fn path_escape_is_rejected() {
     assert!(format!("{err:#}").contains("not allowed"), "{err:#}");
     shutdown(s).await;
 }
+
+// ---- Added by Proof (verifier) ----
+
+/// Fails the test instead of hanging forever.
+async fn within<T>(fut: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(60), fut)
+        .await
+        .expect("operation hung")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_part_from_changed_source_is_dropped_not_kept() {
+    let s = setup().await;
+    let src = s.root.join("changed.bin");
+    write_random_file(&src, 2 * 1024 * 1024);
+    let data = std::fs::read(&src).unwrap();
+
+    // A .part left over from an older version of the file: same length prefix,
+    // different bytes.
+    let out = s.work.join("changed.bin");
+    let part = client::part_path(&out);
+    std::fs::write(&part, vec![0xAAu8; 500_000]).unwrap();
+
+    let err = within(client::get(&s.client, &s.ticket, "changed.bin", &out))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("SHA-256 mismatch"), "{err:#}");
+    assert!(!out.exists(), "corrupt data must never land at OUT");
+    assert!(!part.exists(), "a corrupt .part must be dropped");
+
+    // Running again downloads cleanly.
+    within(client::get(&s.client, &s.ticket, "changed.bin", &out))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), data);
+    shutdown(s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn part_larger_than_source_fails_clearly() {
+    let s = setup().await;
+    std::fs::write(s.root.join("small.txt"), b"tiny").unwrap();
+    let out = s.work.join("small.txt");
+    let part = client::part_path(&out);
+    std::fs::write(&part, vec![1u8; 10_000]).unwrap();
+
+    let err = within(client::get(&s.client, &s.ticket, "small.txt", &out))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("beyond the end"), "{err:#}");
+    assert!(!out.exists());
+    shutdown(s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unicode_and_spaces_in_names_roundtrip() {
+    let s = setup().await;
+    // NFC "é" and NFD "e\u{301}" are different names on Windows/Linux but the
+    // same one on APFS; use only one form per file so the test is portable.
+    let name = "caf\u{e9} \u{65e5}\u{672c} [1] #x.txt";
+    std::fs::write(s.root.join(name), b"unicode ok").unwrap();
+    let entries = within(client::list(&s.client, &s.ticket, ""))
+        .await
+        .unwrap();
+    assert!(entries.iter().any(|e| e.name == name), "{entries:?}");
+    let out = s.work.join(name);
+    within(client::get(&s.client, &s.ticket, name, &out))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"unicode ok");
+    shutdown(s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn oversized_hello_from_stranger_is_refused_and_agent_keeps_serving() {
+    use tokio::io::AsyncWriteExt;
+    let s = setup().await;
+    std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
+
+    // A peer that only knows the address (no token) claims a 16 MiB hello and
+    // never sends it. The agent must refuse from the length prefix alone.
+    let conn = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    send.write_all(&pigeon_core::proto::MAX_FRAME_LEN.to_be_bytes())
+        .await
+        .unwrap();
+    send.flush().await.unwrap();
+    // The agent drops the connection at once; reading must end (error or EOF)
+    // quickly, not wait for a body that never comes.
+    let mut buf = [0u8; 16];
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), recv.read(&mut buf))
+        .await
+        .expect("agent kept waiting for an oversized unauthenticated hello");
+    conn.close(0u32.into(), b"bye");
+
+    let entries = within(client::list(&s.client, &s.ticket, ""))
+        .await
+        .unwrap();
+    assert!(entries.iter().any(|e| e.name == "a.txt"));
+    shutdown(s).await;
+}
