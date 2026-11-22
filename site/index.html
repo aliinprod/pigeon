@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pigeon: your files know the way home</title>
+  <meta name="description" content="Pigeon fetches files from your work computer while you're at home. No VPN, no open ports, no cloud copy. Coming soon, built in public.">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Open Graph / social cards. TODO(owner): once the domain is known, make og:url and og:image absolute (https://DOMAIN/...). -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Pigeon">
+  <meta property="og:title" content="Pigeon: your files know the way home">
+  <meta property="og:description" content="Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.">
+  <meta property="og:image" content="assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Pigeon logo, a white geometric pigeon on black, with the line: Your files know the way home.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pigeon: your files know the way home">
+  <meta name="twitter:description" content="Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.">
+  <meta name="twitter:image" content="assets/og.png">
+  <!-- TODO(owner): add <meta name="twitter:site" content="@HANDLE"> once the X handle is known. -->
+
+  <link rel="icon" type="image/png" sizes="180x180" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body id="top">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <a class="brand" href="#top" aria-label="Pigeon, back to top">
+      <span class="logo logo--sm" aria-hidden="true"><img src="assets/logo.webp" alt=""></span>
+      <span class="wordmark">Pigeon</span>
+    </a>
+    <span class="badge"><span class="dot" aria-hidden="true"></span>Coming soon</span>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="headline">
+      <span class="logo logo--hero"><img src="assets/logo.webp" alt="Pigeon logo: a geometric pigeon in flight"></span>
+      <h1 id="headline">Your files know the way home.</h1>
+      <p class="lede">Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy.</p>
+      <div class="actions">
+        <!-- TODO(owner): replace https://x.com/ with the real profile, e.g. https://x.com/HANDLE -->
+        <a class="btn btn--primary" href="https://x.com/" rel="noopener">Follow the build on X</a>
+        <a class="btn btn--ghost" href="#how">How it works</a>
+      </div>
+    </section>
+
+    <section class="block" id="how" aria-labelledby="how-title">
+      <h2 id="how-title" class="kicker">How it works</h2>
+      <ol class="steps">
+        <li>
+          <span class="num" aria-hidden="true">01</span>
+          <h3>Share a folder at work</h3>
+          <p>A small agent runs on your work computer and shares only the folders you pick. Read&#8209;only.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">02</span>
+          <h3>Ask from home</h3>
+          <p>The app on your home PC lists those folders and asks for the file you need.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">03</span>
+          <h3>It flies straight to you</h3>
+          <p>The two connect directly, encrypted end to end. If a firewall blocks that, a relay forwards bytes it cannot read.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="block" aria-labelledby="principles-title">
+      <h2 id="principles-title" class="kicker">Principles</h2>
+      <ul class="principles">
+        <li>
+          <h3>Your files stay on your machine.</h3>
+          <p>No upload, no sync, no cloud copy. Only the file you fetch lands at home.</p>
+        </li>
+        <li>
+          <h3>Encrypted end to end.</h3>
+          <p>Devices pair once and prove who they are with keys. No ports to open, no VPN to set up at work.</p>
+        </li>
+        <li>
+          <h3>Built in public.</h3>
+          <p>Every day ships a small, working slice, with what broke and what's next.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="block follow" aria-labelledby="follow-title">
+      <p class="series">Building Pigeon <span class="emoji" aria-hidden="true">🕊️</span> · Day N</p>
+      <h2 id="follow-title">Watch it get built, one day at a time.</h2>
+      <p class="muted">Early builds already move real files. Rough edges included.</p>
+      <a class="btn btn--primary" href="https://x.com/" rel="noopener">Follow the build on X</a>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>© 2026 Pigeon</span>
+    <span>Built in public</span>
+  </footer>
+</body>
+</html>

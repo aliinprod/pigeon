@@ -1,0 +1,176 @@
+/* Pigeon: coming-soon page. Plain CSS, no build. */
+:root {
+  --bg: #000;
+  --ink: #0b0b0b;
+  --paper: #fff;
+  --signal: #ff5a1f;
+  --mist: #8a8f98;
+  --line: #2a2c30;
+  --text-2: #a7abb2; /* Mist, lifted slightly for AA on black at small sizes */
+
+  --font-head: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+
+  --gutter: clamp(20px, 5vw, 56px);
+  --maxw: 1120px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--paper);
+  font: 400 17px/1.6 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3 { margin: 0; font-family: var(--font-head); font-weight: 700; letter-spacing: -0.02em; }
+p { margin: 0; }
+
+a { color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.skip {
+  position: absolute; left: 12px; top: -60px;
+  padding: 10px 14px; background: var(--paper); color: var(--ink);
+  border-radius: 999px; font-weight: 600; text-decoration: none; z-index: 10;
+}
+.skip:focus { top: 12px; }
+
+/* ---------- Logo ----------
+   logo.webp is a black bird on an off-white square with lots of padding.
+   invert() turns it white-on-black; contrast() crushes the near-black
+   background to pure #000 so no box edge shows. The wrapper crops the padding. */
+.logo {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 0.67 / 0.48;
+}
+.logo img {
+  position: absolute;
+  width: 149.25%;          /* 1 / 0.67 */
+  left: -25.37%;           /* 0.17 / 0.67 */
+  top: -43.75%;            /* 0.21 / 0.48 */
+  max-width: none;
+  filter: invert(1) contrast(1.35);
+}
+.logo--sm { width: 34px; }
+.logo--hero { width: clamp(150px, 26vw, 260px); margin-bottom: clamp(28px, 4vw, 44px); }
+
+/* ---------- Header ---------- */
+.top {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 22px var(--gutter);
+}
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
+.wordmark { font: 700 20px/1 var(--font-head); letter-spacing: -0.02em; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--line); border-radius: 999px;
+  font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--paper);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
+
+/* ---------- Hero ---------- */
+.hero {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: clamp(56px, 11vw, 140px) var(--gutter) clamp(72px, 12vw, 160px);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.hero h1 {
+  font-size: clamp(44px, 8.4vw, 104px);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  max-width: 11ch;
+  text-wrap: balance;
+}
+.lede {
+  margin-top: clamp(22px, 3vw, 32px);
+  max-width: 34ch;
+  font-size: clamp(18px, 2vw, 22px);
+  line-height: 1.45;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+.actions { margin-top: 40px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 50px; padding: 0 26px;
+  border-radius: 999px;
+  font: 600 16px/1 var(--font-body);
+  text-decoration: none;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.btn--primary { background: var(--paper); color: var(--ink); }
+.btn--primary:hover { background: #e7e7e7; }
+.btn--ghost { border: 1px solid var(--line); color: var(--paper); }
+.btn--ghost:hover { border-color: var(--paper); }
+
+/* ---------- Sections ---------- */
+.block {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: clamp(56px, 8vw, 104px) var(--gutter);
+  border-top: 1px solid var(--line);
+}
+.kicker {
+  font: 500 13px/1 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--mist);
+  margin-bottom: clamp(32px, 4vw, 48px);
+}
+
+.steps, .principles { list-style: none; margin: 0; padding: 0; display: grid; gap: clamp(36px, 4vw, 48px); }
+@media (min-width: 820px) {
+  .steps, .principles { grid-template-columns: repeat(3, 1fr); }
+}
+.steps h3, .principles h3 { font-size: clamp(22px, 2.2vw, 26px); line-height: 1.2; margin-bottom: 12px; }
+.steps p, .principles p { color: var(--text-2); max-width: 34ch; }
+.num {
+  display: block; margin-bottom: 18px;
+  font: 500 14px/1 var(--font-mono); color: var(--signal);
+}
+
+/* ---------- Follow ---------- */
+.follow { text-align: center; display: flex; flex-direction: column; align-items: center; }
+.series { font: 500 14px/1.4 var(--font-mono); color: var(--mist); margin-bottom: 20px; }
+.follow h2 { font-size: clamp(32px, 4.6vw, 56px); line-height: 1.05; letter-spacing: -0.035em; max-width: 16ch; text-wrap: balance; }
+.muted { color: var(--text-2); margin: 20px 0 36px; }
+
+/* ---------- Footer ---------- */
+.foot {
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 28px var(--gutter) 40px;
+  border-top: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between;
+  font: 400 13px/1.4 var(--font-mono); color: var(--mist);
+}
+
+/* ---------- The one motion: hero fades up on load ---------- */
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.hero > * { animation: rise .7s cubic-bezier(.2,.7,.2,1) both; }
+.hero > :nth-child(2) { animation-delay: .08s; }
+.hero > :nth-child(3) { animation-delay: .16s; }
+.hero > :nth-child(4) { animation-delay: .24s; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .hero > * { animation: none; }
+  .btn { transition: none; }
+}
+
+.emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
