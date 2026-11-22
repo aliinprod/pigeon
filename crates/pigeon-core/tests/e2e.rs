@@ -128,6 +128,13 @@ async fn transfer_100mb_and_hash_matches() {
     // Loopback with relays disabled: the only possible path is direct.
     assert_eq!(stats.route, client::Route::Direct);
     assert!(!client::part_path(&out).exists());
+    // SEC-14: the fetched copy is private to the home user.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "fetched file mode {mode:o}");
+    }
     shutdown(s).await;
 }
 

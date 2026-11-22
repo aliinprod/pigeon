@@ -4,6 +4,7 @@ description = "Pigeon protocol types, path guard and transfer code"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 iroh.workspace = true
@@ -18,3 +19,4 @@ getrandom.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true

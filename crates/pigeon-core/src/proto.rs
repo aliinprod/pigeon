@@ -22,10 +22,19 @@ pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
 pub const MAX_HELLO_LEN: u32 = 256;
 
 /// First frame on every stream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Hello {
     pub version: u32,
     pub token: [u8; 32],
+}
+
+impl std::fmt::Debug for Hello {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hello")
+            .field("version", &self.version)
+            .field("token", &crate::REDACTED)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

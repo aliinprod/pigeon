@@ -24,13 +24,14 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: add targets to the repo toolchain
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: universal
       - name: build aarch64
@@ -51,7 +52,7 @@ jobs:
           # Artifacts are zipped without Unix permissions; a tarball keeps +x.
           tar -C dist -czf dist/pigeon-macos-universal.tar.gz pigeon-macos-universal
           cd dist && shasum -a 256 pigeon-macos-universal.tar.gz pigeon-macos-universal/* | tee SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pigeon-macos-universal
           path: |
@@ -67,9 +68,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release
       - name: build
@@ -81,7 +84,7 @@ jobs:
           dist/pigeon.exe --version
           dist/pigeon-agent.exe --version
           cd dist && sha256sum pigeon-agent.exe pigeon.exe | tee SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pigeon-windows-x64
           path: dist/

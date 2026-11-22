@@ -11,12 +11,22 @@ use serde::{Deserialize, Serialize};
 /// Prefix so tickets are recognisable at a glance.
 const PREFIX: &str = "pigeon";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ticket {
     /// The agent's iroh address (endpoint id + relay url + direct addresses).
     pub addr: EndpointAddr,
     /// Day-1 shared secret. Replaced by proper pairing later.
     pub token: [u8; 32],
+}
+
+/// Never prints the token, so a stray `{:?}` cannot leak it into logs (SEC-09).
+impl fmt::Debug for Ticket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ticket")
+            .field("addr", &self.addr)
+            .field("token", &crate::REDACTED)
+            .finish()
+    }
 }
 
 impl fmt::Display for Ticket {
@@ -39,5 +49,36 @@ impl FromStr for Ticket {
             .decode(body.to_ascii_uppercase().as_bytes())
             .context("ticket is not valid base32")?;
         postcard::from_bytes(&bytes).context("ticket is corrupted")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iroh::SecretKey;
+
+    #[test]
+    fn debug_never_prints_the_token() {
+        let t = Ticket {
+            addr: EndpointAddr::new(SecretKey::generate().public()),
+            token: [0xAB; 32],
+        };
+        let dbg = format!("{t:?} {t:#?}");
+        assert!(dbg.contains("<redacted>"), "{dbg}");
+        assert!(!dbg.contains("171"), "token bytes leaked: {dbg}");
+        assert!(
+            !dbg.to_lowercase().contains("abab"),
+            "token bytes leaked: {dbg}"
+        );
+        let hello = crate::proto::Hello {
+            version: 0,
+            token: [0xAB; 32],
+        };
+        assert!(!format!("{hello:?}").contains("171"));
+        let share = crate::agent::Share {
+            root: "x".into(),
+            token: [0xAB; 32],
+        };
+        assert!(!format!("{share:?}").contains("171"));
     }
 }

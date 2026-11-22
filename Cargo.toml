@@ -6,6 +6,8 @@ members = ["crates/pigeon-core", "crates/pigeon-agent", "crates/pigeon-cli"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+# Not published to crates.io (also keeps `cargo deny` wildcard checks meaningful).
+publish = false
 
 [workspace.dependencies]
 pigeon-core = { path = "crates/pigeon-core" }
@@ -20,3 +22,4 @@ subtle = "=2.6.1"
 data-encoding = "=2.11.1"
 getrandom = "=0.4.3"
 tempfile = "=3.27.0"
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }

@@ -103,7 +103,7 @@ pub async fn list(endpoint: &Endpoint, ticket: &Ticket, path: &str) -> Result<Ve
     conn.close(0u32.into(), b"done");
     match response? {
         Response::List(entries) => Ok(entries),
-        Response::Error(e) => bail!("agent: {e}"),
+        Response::Error(e) => bail!("agent: {}", crate::display_safe(&e)),
         other => bail!("unexpected response: {other:?}"),
     }
 }
@@ -217,13 +217,17 @@ async fn receive(
             }
             (size, o, sha256)
         }
-        Response::Error(e) => bail!("agent: {e}"),
+        Response::Error(e) => bail!("agent: {}", crate::display_safe(&e)),
         other => bail!("unexpected response: {other:?}"),
     };
 
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    // Fetched work files are readable by the home user only (SEC-14). On
+    // Windows the file inherits the ACL of the folder it is saved in.
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut file = opts
         .open(part)
         .await
         .with_context(|| format!("could not open {}", part.display()))?;

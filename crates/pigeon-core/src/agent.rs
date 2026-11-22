@@ -30,10 +30,19 @@ const CHUNK: usize = 256 * 1024;
 pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What an agent shares and who may access it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Share {
     pub root: PathBuf,
     pub token: [u8; 32],
+}
+
+impl std::fmt::Debug for Share {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Share")
+            .field("root", &self.root)
+            .field("token", &crate::REDACTED)
+            .finish()
+    }
 }
 
 /// Serves incoming connections on `endpoint` until the endpoint is closed.
@@ -107,13 +116,25 @@ pub async fn handle_connection(conn: Connection, share: &Share) -> Result<()> {
 
 async fn list(root: &Path, path: &str) -> Result<Vec<Entry>> {
     let dir = guard::resolve(root, path)?;
+    let canon_root = tokio::fs::canonicalize(root)
+        .await
+        .context("the shared folder is not available")?;
     let mut rd = tokio::fs::read_dir(&dir)
         .await
         .with_context(|| format!("not a directory: {path}"))?;
     let mut entries = Vec::new();
     while let Some(e) = rd.next_entry().await? {
-        // Follow symlinks for metadata; Get still goes through the guard.
-        let Ok(meta) = tokio::fs::metadata(e.path()).await else {
+        // Follow symlinks, but only to targets inside the share: an entry
+        // whose real path is outside must not leak its size, mtime or type,
+        // and is hidden like a missing file (SEC-04). Get still goes through
+        // the guard.
+        let Ok(real) = tokio::fs::canonicalize(e.path()).await else {
+            continue;
+        };
+        if !real.starts_with(&canon_root) {
+            continue;
+        }
+        let Ok(meta) = tokio::fs::metadata(&real).await else {
             continue;
         };
         let mtime = meta
@@ -185,4 +206,55 @@ pub async fn sha256_file(path: PathBuf) -> Result<[u8; 32]> {
         Ok(out)
     })
     .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Makes `link` point at the directory `target`: a symlink on Unix, a
+    /// junction on Windows (no admin rights needed there).
+    fn dir_link(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "mklink /J failed: {out:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_hides_links_that_point_outside_the_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("share");
+        std::fs::create_dir_all(root.join("inner")).unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"top secret").unwrap();
+        dir_link(&outside, &root.join("out"));
+        dir_link(&root.join("inner"), &root.join("in"));
+        let names: Vec<String> = list(&root, "")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["in", "inner"], "escaping link must not be listed");
+    }
+
+    #[tokio::test]
+    async fn errors_sent_to_the_peer_do_not_contain_the_root_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("gone-share");
+        let err = format!("{:#}", list(&root, "").await.unwrap_err());
+        assert!(!err.contains("gone-share"), "{err}");
+        let err = format!("{:#}", open_for_get(&root, "x", 0).await.unwrap_err());
+        assert!(!err.contains("gone-share"), "{err}");
+    }
 }
