@@ -1,6 +1,7 @@
 //! Client side: list a directory or fetch one file from an agent.
 
 use std::{
+    fmt,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -18,6 +19,37 @@ use crate::{
     proto::{Entry, Hello, PROTOCOL_VERSION, Request, Response, read_frame, write_frame},
 };
 
+/// How the bytes reached us, as seen by the client at the end of a transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// A direct UDP path between the two devices (hole punching worked).
+    Direct,
+    /// Forwarded by the relay (end-to-end encrypted; the relay cannot read it).
+    Relay,
+    /// No selected path was reported (should not happen on a live connection).
+    Unknown,
+}
+
+impl fmt::Display for Route {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Route::Direct => "direct",
+            Route::Relay => "relay",
+            Route::Unknown => "unknown",
+        })
+    }
+}
+
+/// The path iroh currently uses to send application data on `conn`.
+pub fn route(conn: &Connection) -> Route {
+    let paths = conn.paths();
+    match paths.iter().find(|p| p.is_selected()) {
+        Some(p) if p.is_ip() => Route::Direct,
+        Some(p) if p.is_relay() => Route::Relay,
+        _ => Route::Unknown,
+    }
+}
+
 /// Result of a successful [`get`].
 #[derive(Debug, Clone)]
 pub struct GetStats {
@@ -30,6 +62,8 @@ pub struct GetStats {
     pub elapsed: Duration,
     /// Hex SHA-256 of the final file (verified against the agent's hash).
     pub sha256: String,
+    /// Path in use when the transfer finished.
+    pub route: Route,
 }
 
 impl GetStats {
@@ -81,11 +115,37 @@ pub fn part_path(out: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Returns `out` if nothing exists there yet, otherwise the first free
+/// `name (1).ext`, `name (2).ext`, ... next to it. Never overwrites.
+pub fn free_path(out: &Path) -> PathBuf {
+    if !exists(out) {
+        return out.to_path_buf();
+    }
+    let stem = out
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = out
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    (1u32..)
+        .map(|n| out.with_file_name(format!("{stem} ({n}){ext}")))
+        .find(|p| !exists(p))
+        .expect("ran out of u32 file names")
+}
+
+/// Like `Path::exists`, but a dangling symlink also counts as taken.
+fn exists(p: &Path) -> bool {
+    p.symlink_metadata().is_ok()
+}
+
 /// Downloads `path` from the agent into `out`.
 ///
 /// Data goes to `<out>.part` first; an existing `.part` file is resumed from
-/// its current size. After the transfer the SHA-256 of the whole file is
-/// checked against the agent's hash and the file is renamed to `out`.
+/// its current size (or dropped, if the agent says it is longer than the
+/// file). After the transfer the SHA-256 of the whole file is checked against
+/// the agent's hash and the file is renamed to `out`.
 pub async fn get(endpoint: &Endpoint, ticket: &Ticket, path: &str, out: &Path) -> Result<GetStats> {
     let part = part_path(out);
     let offset = match tokio::fs::metadata(&part).await {
@@ -100,8 +160,9 @@ pub async fn get(endpoint: &Endpoint, ticket: &Ticket, path: &str, out: &Path) -
     };
     let (conn, _send, mut recv) = request(endpoint, ticket, &req).await?;
     let result = receive(&mut recv, &part, offset).await;
+    let route = route(&conn);
     conn.close(0u32.into(), b"done");
-    let (size, expected) = result?;
+    let (size, offset, expected) = result?;
     let elapsed = start.elapsed();
 
     let actual = sha256_file(part.clone()).await?;
@@ -126,25 +187,35 @@ pub async fn get(endpoint: &Endpoint, ticket: &Ticket, path: &str, out: &Path) -
         received: size - offset,
         elapsed,
         sha256: crate::hex(&actual),
+        route,
     })
 }
 
-/// Reads the header and the file bytes into `part`. Returns (size, sha256).
+/// Reads the header and the file bytes into `part`.
+/// Returns (size, effective offset, sha256).
 async fn receive(
     recv: &mut RecvStream,
     part: &Path,
     offset: u64,
-) -> Result<(u64, Option<[u8; 32]>)> {
-    let (size, sha256) = match read_frame(recv).await? {
+) -> Result<(u64, u64, Option<[u8; 32]>)> {
+    let (size, offset, sha256) = match read_frame(recv).await? {
         Response::File {
             size,
             offset: o,
             sha256,
         } => {
-            if o != offset {
+            if o == 0 && offset > 0 {
+                // Our .part is longer than the file: it is stale. Start over.
+                tokio::fs::remove_file(part)
+                    .await
+                    .with_context(|| format!("could not remove stale {}", part.display()))?;
+            } else if o != offset {
                 bail!("agent answered with offset {o}, expected {offset}");
             }
-            (size, sha256)
+            if o > size {
+                bail!("agent answered with offset {o} beyond size {size}");
+            }
+            (size, o, sha256)
         }
         Response::Error(e) => bail!("agent: {e}"),
         other => bail!("unexpected response: {other:?}"),
@@ -172,5 +243,46 @@ async fn receive(
     if got != expected {
         bail!("transfer interrupted: got {got} of {expected} bytes (run again to resume)");
     }
-    Ok((size, sha256))
+    Ok((size, offset, sha256))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn free_path_keeps_a_new_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("report.pdf");
+        assert_eq!(free_path(&out), out);
+    }
+
+    #[test]
+    fn free_path_numbers_taken_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("report.pdf");
+        std::fs::write(&out, b"1").unwrap();
+        assert_eq!(free_path(&out), dir.path().join("report (1).pdf"));
+        std::fs::write(dir.path().join("report (1).pdf"), b"2").unwrap();
+        assert_eq!(free_path(&out), dir.path().join("report (2).pdf"));
+    }
+
+    #[test]
+    fn free_path_without_extension_and_dotfiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("Makefile");
+        std::fs::write(&plain, b"").unwrap();
+        assert_eq!(free_path(&plain), dir.path().join("Makefile (1)"));
+        let dot = dir.path().join(".env");
+        std::fs::write(&dot, b"").unwrap();
+        assert_eq!(free_path(&dot), dir.path().join(".env (1)"));
+    }
+
+    #[test]
+    fn free_path_treats_a_directory_as_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("photos");
+        std::fs::create_dir(&out).unwrap();
+        assert_eq!(free_path(&out), dir.path().join("photos (1)"));
+    }
 }
