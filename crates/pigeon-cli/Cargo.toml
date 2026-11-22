@@ -4,6 +4,7 @@ description = "Pigeon CLI: fetch files from a Pigeon agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "pigeon"

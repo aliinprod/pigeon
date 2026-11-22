@@ -1,0 +1,79 @@
+# cargo-deny policy for Pigeon (owned by Warden). Run: `cargo deny check`.
+# CI: .github/workflows/security.yml. Every ignore below needs a reason and a
+# review date; remove it as soon as the upstream fix lands.
+
+[graph]
+# Check the dependency graph for every platform we ship, not just the host.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = false
+
+[advisories]
+# Vulnerabilities always fail. Unmaintained / unsound / yanked also fail unless
+# ignored below with a reason.
+version = 2
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+ignore = [
+    # heapless 0.7.17 (via postcard 1.2.0 default features, also pulled in by
+    # iroh-relay). The unsound APIs are Deque, IndexMap, SortedLinkedList,
+    # Spsc, the treiber pool and HistoryBuffer views; postcard and Pigeon only
+    # use heapless::Vec. No fixed postcard 1.x on heapless 0.9 yet.
+    # Review: 2026-12-31.
+    { id = "RUSTSEC-2026-0574", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0575", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0576", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0577", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0578", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0579", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0580", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0581", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0582", reason = "heapless 0.7 via postcard; affected API unused" },
+    # chrono (via iroh -> netwatch) is flagged unmaintained, not vulnerable.
+    # Review: 2026-12-31.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained only; transitive via iroh/netwatch" },
+]
+
+[licenses]
+version = 2
+# Permissive licenses only. Pigeon is MIT OR Apache-2.0.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# Path dependencies inside this workspace are fine.
+allow-wildcard-paths = true
+deny = [
+    # OpenSSL: we use rustls only (no custom or system TLS stacks).
+    { crate = "openssl", reason = "rustls only" },
+    { crate = "openssl-sys", reason = "rustls only" },
+    { crate = "native-tls", reason = "rustls only" },
+]
+
+[sources]
+# Only crates.io; no git dependencies, no other registries.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

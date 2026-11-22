@@ -4,6 +4,7 @@ description = "Pigeon agent: shares a folder over iroh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "pigeon-agent"

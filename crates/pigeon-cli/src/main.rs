@@ -110,7 +110,9 @@ async fn run(endpoint: &Endpoint, command: Command, relay_only: bool) -> Result<
             let ticket = prepare(ticket, relay_only);
             for e in client::list(endpoint, &ticket, &path).await? {
                 let kind = if e.is_dir { "dir " } else { "file" };
-                println!("{kind}  {:>14}  {:>10}  {}", e.size, e.mtime, e.name);
+                // Names come from the agent: never let them drive the terminal.
+                let name = pigeon_core::display_safe(&e.name);
+                println!("{kind}  {:>14}  {:>10}  {name}", e.size, e.mtime);
             }
         }
         Command::Get { ticket, path, out } => {

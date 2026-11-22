@@ -1,0 +1,66 @@
+name: security
+
+# Supply-chain and secret checks (owned by Warden). Runs on cheap Linux
+# runners only; the product tests (including the property tests) run in ci.yml.
+#
+# Every third-party action is pinned to a full commit SHA (tag in the comment).
+# To update a pin: gh api repos/OWNER/REPO/git/ref/tags/TAG (dereference
+# annotated tags via git/tags/SHA) and change SHA and comment together.
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC: catch new advisories on old code
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_DENY_VERSION: 0.22.0
+
+jobs:
+  cargo-deny:
+    name: cargo deny (advisories, licenses, bans, sources)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: cargo-deny-${{ env.CARGO_DENY_VERSION }}
+      - name: install cargo-deny
+        run: |
+          if ! cargo deny --version 2>/dev/null | grep -q "$CARGO_DENY_VERSION"; then
+            cargo install --locked "cargo-deny@$CARGO_DENY_VERSION"
+          fi
+          cargo deny --version
+      - name: cargo deny check
+        run: cargo deny --locked check
+
+  gitleaks:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # list the PR's commits to scan
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # scan the whole history, not just the tip
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false" # no write permission needed

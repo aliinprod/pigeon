@@ -42,7 +42,8 @@ pub fn resolve(root: &Path, requested: &str) -> Result<PathBuf> {
 
     let root = root
         .canonicalize()
-        .with_context(|| format!("shared root not found: {}", root.display()))?;
+        // No absolute path here: this message is sent to the remote peer (SEC-10).
+        .context("the shared folder is not available")?;
     let full = root
         .join(&relative)
         .canonicalize()
