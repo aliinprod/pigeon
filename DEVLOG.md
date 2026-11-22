@@ -16,4 +16,9 @@ Format per day: **Did / Broke / Next**, plus numbers and a screenshot when there
 - **Did:** Cross-network CI test (agent on a cloud Mac, client on a cloud Windows box), downloadable binaries for macOS + Windows, `--relay-only` flag, route shown after every transfer, no silent overwrite.
 - **Broke:** iroh's free public relay is slow: 2 MiB took 75 s (~30 KB/s). Direct connections: ~180 MB/s. The verifier also caught two injection-style bugs (workflow inputs in bash arithmetic, unsafe output file names on Windows) and fixed them with tests.
 - **Result (CI, cloud Mac → cloud Windows, two networks):** 10 MiB direct in 0.87 s (12 MB/s), relay-only 1 MiB in 22.6 s (0.046 MB/s). Both SHA-256 match.
-- **Next:** First real test: agent on the office Mac, fetch from home. Decide on our own relay after seeing whether the office allows a direct path.
+- **Next:** First real test: agent on the office Mac, fetch from home.
+
+## Day 3 — 2026-11-23
+- **Did:** Coming-soon site live at https://flypigeon.pages.dev (EN/UZ/RU, FAQ). New bots: Plume (web design) and Warden (security). Security foundation: threat model, 28 requirements, pairing design, cargo-deny + gitleaks in CI, all actions pinned to SHAs, 9 property tests.
+- **Broke:** Warden found the Day-1 ticket is effectively a password with no expiry (fix: week-2 pairing) and fixed 5 small issues; Proof caught Warden's own filter mangling Persian names and emoji.
+- **Next:** Agent on the real office Mac, fetch from home; then pairing. Decide on our own relay after seeing whether the office allows a direct path.
