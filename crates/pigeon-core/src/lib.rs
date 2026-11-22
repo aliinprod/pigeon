@@ -28,9 +28,14 @@ pub fn hex(bytes: &[u8]) -> String {
 pub fn display_safe(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
+        // ZWNJ / ZWJ (U+200C, U+200D) are deliberately kept: they are part of
+        // normal Persian / Indic words and emoji sequences, and escaping them
+        // would make listed names impossible to copy back into `get`.
         let bidi_or_invisible = matches!(
             c,
-            '\u{200B}'..='\u{200F}'
+            '\u{061C}'
+                | '\u{200B}'
+                | '\u{200E}'..='\u{200F}'
                 | '\u{202A}'..='\u{202E}'
                 | '\u{2066}'..='\u{2069}'
                 | '\u{FEFF}'
@@ -65,5 +70,23 @@ mod tests {
         assert_eq!(shown, r"a\u{1b}]0;pwned\u{7}\u{1b}[2Jb\u{d}\u{a}");
         // A right-to-left override can make `x<RLO>fdp.exe` look like `xexe.pdf`.
         assert_eq!(display_safe("x\u{202E}fdp.exe"), r"x\u{202e}fdp.exe");
+        assert_eq!(display_safe("a\u{061C}b"), r"a\u{61c}b");
+    }
+
+    #[test]
+    fn display_safe_keeps_normal_names_of_any_script() {
+        for name in [
+            "Hisobot_oʻzbekcha_gʻalaba.xlsx", // Uzbek Latin (U+02BB)
+            "Отчёт за ноябрь.pdf",            // Cyrillic
+            "Ҳисобот Ўзбекистон.txt",         // Uzbek Cyrillic
+            "Cafe\u{301} NFD.txt",            // macOS NFD combining accent
+            "تقرير.pdf",                      // Arabic letters (RTL, no controls)
+            "می\u{200C}خواهم.txt",            // Persian with ZWNJ
+            "fam \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}.png", // emoji ZWJ
+            "日本語 ファイル.txt",
+            "  two  spaces .txt",
+        ] {
+            assert_eq!(display_safe(name), name, "normal name was mangled");
+        }
     }
 }
