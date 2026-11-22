@@ -1,0 +1,20 @@
+[package]
+name = "pigeon-core"
+description = "Pigeon protocol types, path guard and transfer code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+iroh.workspace = true
+tokio.workspace = true
+serde.workspace = true
+postcard.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+data-encoding.workspace = true
+getrandom.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
