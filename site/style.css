@@ -173,6 +173,34 @@ h1, h2, h3 { overflow-wrap: break-word; hyphens: auto; }
   font: 500 14px/1 var(--font-mono); color: var(--signal);
 }
 
+/* ---------- FAQ (native details/summary, no JS) ---------- */
+.faq { max-width: 820px; border-bottom: 1px solid var(--line); }
+.faq details { border-top: 1px solid var(--line); }
+.faq summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 22px 0;
+  font: 500 clamp(18px, 2vw, 21px)/1.35 var(--font-head);
+  letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary:hover .q { color: var(--text-2); }
+.faq .q { min-width: 0; transition: color .15s ease; }
+/* Calm +/- : two thin bars; the vertical one folds flat when open. */
+.faq .ind { position: relative; flex: none; width: 14px; height: 14px; }
+.faq .ind::before, .faq .ind::after {
+  content: ""; position: absolute; left: 0; top: 6px;
+  width: 14px; height: 2px; border-radius: 1px; background: var(--mist);
+  transition: transform .2s ease, background-color .15s ease;
+}
+.faq .ind::after { transform: rotate(90deg); }
+.faq details[open] .ind::after { transform: rotate(0deg); }
+.faq details[open] .ind::before, .faq details[open] .ind::after,
+.faq summary:hover .ind::before, .faq summary:hover .ind::after { background: var(--paper); }
+.faq details p { color: var(--text-2); max-width: 62ch; padding: 0 38px 26px 0; }
+
 /* ---------- Follow ---------- */
 .follow { text-align: center; display: flex; flex-direction: column; align-items: center; }
 .series { font: 500 14px/1.4 var(--font-mono); color: var(--mist); margin-bottom: 20px; }
@@ -201,4 +229,5 @@ h1, h2, h3 { overflow-wrap: break-word; hyphens: auto; }
   html { scroll-behavior: auto; }
   .hero > * { animation: none; }
   .btn { transition: none; }
+  .faq .q, .faq .ind::before, .faq .ind::after { transition: none; }
 }
