@@ -263,26 +263,41 @@ fn short_limits(max_connections: usize, max_per_peer: usize) -> ServeOptions {
 async fn per_peer_connection_limit_closes_extra_connections() {
     let s = setup_with(short_limits(32, 2), true).await;
     std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
-    // Two connections that send nothing yet and just sit there.
-    let held1 = within(s.client.connect(s.addr.clone(), ALPN))
-        .await
-        .unwrap();
-    let held2 = within(s.client.connect(s.addr.clone(), ALPN))
-        .await
-        .unwrap();
-    // The third one from the same peer is closed by the agent as "busy".
-    let extra = within(s.client.connect(s.addr.clone(), ALPN))
-        .await
-        .unwrap();
-    let reason = tokio::time::timeout(Duration::from_secs(5), extra.closed())
-        .await
-        .expect("agent kept a connection over the per-peer limit");
+    // Three connections from one peer that send nothing and just sit there.
+    // The agent finishes handshakes in its own order, so we do not assume
+    // which one it closes (W-8): exactly one must be closed as busy.
+    let mut conns = Vec::new();
+    for _ in 0..3 {
+        conns.push(
+            within(s.client.connect(s.addr.clone(), ALPN))
+                .await
+                .unwrap(),
+        );
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let closed = loop {
+        let closed: Vec<_> = conns
+            .iter()
+            .filter(|c| c.close_reason().is_some())
+            .collect();
+        if !closed.is_empty() || std::time::Instant::now() > deadline {
+            break closed.len();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(closed, 1, "agent kept a connection over the per-peer limit");
+    // Give a wrongly closed second one a moment to show up.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (busy, open): (Vec<_>, Vec<_>) =
+        conns.into_iter().partition(|c| c.close_reason().is_some());
+    assert_eq!((busy.len(), open.len()), (1, 2));
+    let reason = busy[0].close_reason().unwrap();
     assert!(format!("{reason}").contains("busy"), "{reason}");
     // Freeing a slot lets the peer in again.
-    held1.close(0u32.into(), b"bye");
+    open[0].close(0u32.into(), b"bye");
     let entries = list_eventually(&s).await;
     assert!(entries.iter().any(|e| e.name == "a.txt"));
-    held2.close(0u32.into(), b"bye");
+    open[1].close(0u32.into(), b"bye");
     shutdown(s).await;
 }
 
