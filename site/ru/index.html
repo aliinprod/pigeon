@@ -90,6 +90,72 @@
       </ol>
     </section>
 
+    <section class="block" id="app" aria-labelledby="app-title">
+      <h2 id="app-title" class="kicker">Как выглядит приложение</h2>
+      <div class="app-intro">
+        <p class="note"><span class="dot" aria-hidden="true"></span>Это макет дизайна — приложение скоро выйдет</p>
+        <p class="app-lede">Любой ваш компьютер может и открывать папки, и забирать файлы: сейчас Mac и Windows, скоро Linux. На этих экранах Mac открывает папку, а компьютер с Windows забирает файлы.</p>
+      </div>
+      <ol class="tour">
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">01</span>
+            <h3>Откройте папку</h3>
+            <p>Выберите папки, которые понадобятся дома. Они открыты только на чтение, а в строке меню видно, кто что забрал.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="../assets/app/share-dark.webp" media="(prefers-color-scheme: dark)" width="630" height="480">
+              <img src="../assets/app/share-light.webp" width="630" height="480" loading="lazy" decoding="async" alt="Pigeon в строке меню Mac: в сети, папки ForHome и Projects/Q4 открыты только на чтение, видны последние файлы, которые забрал Home PC.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">02</span>
+            <h3>Свяжите устройства один раз кодом из 4&nbsp;слов</h3>
+            <p>Отправьте себе ссылку-приглашение и введите код из 4&nbsp;слов на другом компьютере. У каждого устройства свой ключ, и его можно отозвать в любой момент.</p>
+          </div>
+          <figure class="shot shot--pair">
+            <picture class="shot-main">
+              <source srcset="../assets/app/pair-mac-dark.webp" media="(prefers-color-scheme: dark)" width="800" height="600">
+              <img src="../assets/app/pair-mac-light.webp" width="800" height="600" loading="lazy" decoding="async" alt="Связывание устройства на Mac: ссылка-приглашение с кнопкой копирования и код из 4 слов otter plaza crumb vivid. Одноразовый, 3 попытки.">
+            </picture>
+            <picture class="shot-inset">
+              <source srcset="../assets/app/pair-win-dark.webp" media="(prefers-color-scheme: dark)" width="520" height="380">
+              <img src="../assets/app/pair-win-light.webp" width="520" height="380" loading="lazy" decoding="async" alt="На компьютере с Windows вводится код из 4 слов, для третьего слова показаны подсказки.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">03</span>
+            <h3>Найдите файл и нажмите Get</h3>
+            <p>Открытые папки видны на другом компьютере. Найдите нужный файл и нажмите Get. Пока вы не попросите, ничего не копируется.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="../assets/app/browse-dark.webp" media="(prefers-color-scheme: dark)" width="1040" height="636">
+              <img src="../assets/app/browse-light.webp" width="1040" height="636" loading="lazy" decoding="async" alt="Pigeon на Windows: папка Work Mac, ForHome, Reports, четыре файла с размерами и кнопка Get.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">04</span>
+            <h3>Напрямую и с проверкой</h3>
+            <p>Если сеть позволяет, файл идёт напрямую, если нет — через промежуточный сервер. Каждый файл сверяется по SHA&#8209;256, и ничего не перезаписывается.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="../assets/app/transfers-dark.webp" media="(prefers-color-scheme: dark)" width="1040" height="636">
+              <img src="../assets/app/transfers-light.webp" width="1040" height="636" loading="lazy" decoding="async" alt="Загрузки на Windows: две в процессе (одна напрямую, одна через промежуточный сервер) и два готовых файла с отметкой SHA-256 verified.">
+            </picture>
+          </figure>
+        </li>
+      </ol>
+    </section>
+
     <section class="block" aria-labelledby="principles-title">
       <h2 id="principles-title" class="kicker">Принципы</h2>
       <ul class="principles">
@@ -129,7 +195,7 @@
         </details>
         <details>
           <summary><span class="q">Могут ли мои файлы украсть?</span><span class="ind" aria-hidden="true"></span></summary>
-          <p>Файлы передаются в зашифрованном виде (TLS 1.3), поэтому любой посредник, включая промежуточный сервер, видит только бессмысленный набор данных. Запрашивать файлы могут только связанные вами устройства, у каждого свой ключ, и при каждом изменении тесты пробуют войти с чужим ключом и слать огромные сообщения от незнакомцев. Не оставляйте эти устройства без блокировки; потерянное устройство можно будет отключить с рабочего компьютера.</p>
+          <p>Файлы передаются в зашифрованном виде (TLS 1.3), поэтому любой посредник, включая промежуточный сервер, видит только бессмысленный набор данных. Запрашивать файлы могут только устройства, которые вы один раз связали кодом из 4 слов, у каждого свой ключ, и при каждом изменении тесты пробуют войти с чужим ключом и слать огромные сообщения от незнакомцев. Не оставляйте эти устройства без блокировки; потерянное устройство отзовите на рабочем компьютере, и оно будет отключено в течение секунды.</p>
         </details>
         <details>
           <summary><span class="q">Откуда вы знаете, что это безопасно?</span><span class="ind" aria-hidden="true"></span></summary>

@@ -90,6 +90,72 @@
       </ol>
     </section>
 
+    <section class="block" id="app" aria-labelledby="app-title">
+      <h2 id="app-title" class="kicker">Ilova qanday ko‘rinadi</h2>
+      <div class="app-intro">
+        <p class="note"><span class="dot" aria-hidden="true"></span>Bu dizayn namunasi — ilova tez orada chiqadi</p>
+        <p class="app-lede">Istalgan kompyuteringiz papkalarini ochib berishi ham, fayl olishi ham mumkin. Hozir Mac va Windows’da, Linux’da ham tez orada. Rasmlarda Mac papkani ochib bergan, Windows kompyuter esa fayl olyapti.</p>
+      </div>
+      <ol class="tour">
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">01</span>
+            <h3>Papkani tanlang</h3>
+            <p>Uydan kerak bo‘ladigan papkalarni tanlaysiz. Ular faqat o‘qish uchun ochiladi, menyu panelida esa kim qaysi faylni olgani ko‘rinib turadi.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="../assets/app/share-dark.webp" media="(prefers-color-scheme: dark)" width="630" height="480">
+              <img src="../assets/app/share-light.webp" width="630" height="480" loading="lazy" decoding="async" alt="Mac menyu panelidagi Pigeon: internetga ulangan, ForHome va Projects/Q4 papkalari faqat o‘qish uchun ochilgan, Home PC olgan so‘nggi fayllar ko‘rinadi.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">02</span>
+            <h3>4 so‘zli kod bilan bir marta ulang</h3>
+            <p>Taklif havolasini o‘zingizga yuborasiz, keyin 4 so‘zli kodni ikkinchi kompyuterda terasiz. Har bir qurilmaning o‘z kaliti bor, uni istalgan payt bekor qilishingiz mumkin.</p>
+          </div>
+          <figure class="shot shot--pair">
+            <picture class="shot-main">
+              <source srcset="../assets/app/pair-mac-dark.webp" media="(prefers-color-scheme: dark)" width="800" height="600">
+              <img src="../assets/app/pair-mac-light.webp" width="800" height="600" loading="lazy" decoding="async" alt="Mac’da qurilma ulash oynasi: nusxa olinadigan taklif havolasi va 4 so‘zli kod: otter plaza crumb vivid. Bir martalik, 3 ta urinish.">
+            </picture>
+            <picture class="shot-inset">
+              <source srcset="../assets/app/pair-win-dark.webp" media="(prefers-color-scheme: dark)" width="520" height="380">
+              <img src="../assets/app/pair-win-light.webp" width="520" height="380" loading="lazy" decoding="async" alt="Windows kompyuterda 4 so‘zli kod terilmoqda, uchinchi so‘z uchun takliflar chiqqan.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">03</span>
+            <h3>Faylni toping va Get’ni bosing</h3>
+            <p>Ochilgan papkalar ikkinchi kompyuterda ko‘rinadi. Kerakli faylni topib, Get tugmasini bosasiz. Siz so‘ramaguningizcha hech narsa ko‘chirilmaydi.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="../assets/app/browse-dark.webp" media="(prefers-color-scheme: dark)" width="1040" height="636">
+              <img src="../assets/app/browse-light.webp" width="1040" height="636" loading="lazy" decoding="async" alt="Windows’dagi Pigeon: Work Mac, ForHome, Reports papkasidagi to‘rtta fayl, hajmlari va Get tugmasi.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">04</span>
+            <h3>To‘g‘ridan-to‘g‘ri va tekshirilgan holda</h3>
+            <p>Tarmoq imkon bersa, fayl to‘g‘ridan-to‘g‘ri keladi, bo‘lmasa oraliq server orqali. Har bir fayl SHA&#8209;256 bilan tekshiriladi va hech qaysi fayl ustidan yozilmaydi.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="../assets/app/transfers-dark.webp" media="(prefers-color-scheme: dark)" width="1040" height="636">
+              <img src="../assets/app/transfers-light.webp" width="1040" height="636" loading="lazy" decoding="async" alt="Windows’dagi yuklab olishlar: ikkitasi jarayonda (biri to‘g‘ridan-to‘g‘ri, biri oraliq server orqali), ikkitasi tugagan va SHA-256 bilan tekshirilgan.">
+            </picture>
+          </figure>
+        </li>
+      </ol>
+    </section>
+
     <section class="block" aria-labelledby="principles-title">
       <h2 id="principles-title" class="kicker">Tamoyillar</h2>
       <ul class="principles">
@@ -129,7 +195,7 @@
         </details>
         <details>
           <summary><span class="q">Fayllarimni kimdir o‘g‘irlab olishi mumkinmi?</span><span class="ind" aria-hidden="true"></span></summary>
-          <p>Fayllar yo‘lda shifrlangan holda (TLS 1.3) boradi, oradagi hech kim, hatto oraliq server ham ularni o‘qiy olmaydi. Fayl so‘ray oladigan yagona qurilmalar siz ulagan, har biri o‘z kalitiga ega qurilmalardir; testlarimiz har bir yangilanishda noto‘g‘ri kalit va begonalardan kelgan haddan tashqari katta xabarlar bilan kirib ko‘rishga urinadi. Ulangan qurilmalaringizni qulflab yuring; biror qurilma yo‘qolsa, uni ish kompyuteringizdan o‘chirib qo‘yish mumkin bo‘ladi.</p>
+          <p>Fayllar yo‘lda shifrlangan holda (TLS 1.3) boradi, oradagi hech kim, hatto oraliq server ham ularni o‘qiy olmaydi. Fayl so‘ray oladigan yagona qurilmalar siz 4 so‘zli kod bilan bir marta ulagan, har biri o‘z kalitiga ega qurilmalardir; testlarimiz har bir yangilanishda noto‘g‘ri kalit va begonalardan kelgan haddan tashqari katta xabarlar bilan kirib ko‘rishga urinadi. Ulangan qurilmalaringizni qulflab yuring; biror qurilma yo‘qolsa, uni ish kompyuteringizda bekor qiling, u bir soniya ichida uzib qo‘yiladi.</p>
         </details>
         <details>
           <summary><span class="q">Xavfsiz ekanini qayerdan bilasiz?</span><span class="ind" aria-hidden="true"></span></summary>
