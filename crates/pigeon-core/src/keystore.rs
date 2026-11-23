@@ -86,6 +86,12 @@ pub fn load_or_create_key(store: &dyn SecretStore, name: &str) -> Result<(Secret
 /// config dir.
 pub fn default_store(config_dir: &Path, namespace: &str) -> Result<Box<dyn SecretStore>> {
     match std::env::var(KEYSTORE_ENV).as_deref() {
+        // W-3: no file fallback on Windows; Credential Manager is always there.
+        #[cfg(windows)]
+        Ok("file") => bail!(
+            "{KEYSTORE_ENV}=file is not supported on Windows: keys stay in Credential Manager"
+        ),
+        #[cfg(not(windows))]
         Ok("file") => return Ok(Box::new(FileStore::new(config_dir.join("secrets")))),
         Ok("") | Ok("os") | Err(_) => {}
         Ok(other) => bail!("unknown {KEYSTORE_ENV}={other:?} (use `os` or `file`)"),

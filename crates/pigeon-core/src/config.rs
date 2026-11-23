@@ -91,7 +91,10 @@ fn default_dir() -> Result<PathBuf> {
     }
 }
 
-/// Creates `dir` (and parents) if needed; on Unix the dir itself is `0700`.
+/// Creates `dir` (and parents) if needed and makes it owner-only: `0700` on
+/// Unix; on Windows a protected DACL (no inheritance from the parent) that
+/// grants full control to the current user and SYSTEM only, inherited by
+/// every file created inside (W-3). If that fails we refuse to go on.
 pub fn ensure_private_dir(dir: &Path) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     #[cfg(unix)]
@@ -100,12 +103,164 @@ pub fn ensure_private_dir(dir: &Path) -> Result<()> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
             .with_context(|| format!("could not restrict {}", dir.display()))?;
     }
+    #[cfg(windows)]
+    winacl::restrict_to_current_user(dir)
+        .with_context(|| format!("could not make {} private to this user", dir.display()))?;
     Ok(())
 }
 
+/// Owner-only DACL on Windows through the Win32 API. `unsafe` is unavoidable
+/// (no std API for ACLs); every call is a thin FFI wrapper with its pointer
+/// rules next to it.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod winacl {
+    use std::{os::windows::ffi::OsStrExt, path::Path, ptr::null_mut};
+
+    use anyhow::{Result, bail};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, GetLastError, HANDLE, LocalFree},
+        Security::{
+            ACL,
+            Authorization::{
+                ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+                SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+            },
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
+            PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER,
+            TokenUser,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    fn wide(s: &std::ffi::OsStr) -> Vec<u16> {
+        s.encode_wide().chain(Some(0)).collect()
+    }
+
+    /// The current user's SID as a string, e.g. `S-1-5-21-...`.
+    pub fn current_user_sid() -> Result<String> {
+        let mut token: HANDLE = null_mut();
+        // SAFETY: GetCurrentProcess returns a pseudo handle that needs no
+        // closing; `token` is a valid out-pointer.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            // SAFETY: plain FFI call with no arguments.
+            bail!("OpenProcessToken failed (error {})", unsafe {
+                GetLastError()
+            });
+        }
+        let result = (|| {
+            let mut len = 0u32;
+            // SAFETY: a size query with a null buffer of length 0 is the
+            // documented way to learn the needed size; `len` is valid.
+            unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &mut len) };
+            // u64 elements keep the buffer aligned for TOKEN_USER.
+            let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+            // SAFETY: `buf` has at least `len` writable bytes.
+            let ok = unsafe {
+                GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len)
+            };
+            if ok == 0 {
+                // SAFETY: plain FFI call with no arguments.
+                bail!("GetTokenInformation failed (error {})", unsafe {
+                    GetLastError()
+                });
+            }
+            // SAFETY: on success the buffer starts with a TOKEN_USER whose SID
+            // points into the same buffer, which outlives this use.
+            let sid = unsafe { (*(buf.as_ptr() as *const TOKEN_USER)).User.Sid };
+            let mut text: *mut u16 = null_mut();
+            // SAFETY: `sid` is valid (see above); `text` is a valid out-pointer.
+            if unsafe { ConvertSidToStringSidW(sid, &mut text) } == 0 {
+                // SAFETY: plain FFI call with no arguments.
+                bail!("ConvertSidToStringSidW failed (error {})", unsafe {
+                    GetLastError()
+                });
+            }
+            // SAFETY: on success `text` is a NUL-terminated UTF-16 string
+            // allocated with LocalAlloc; we read up to the NUL, then free it once.
+            let s = unsafe {
+                let mut n = 0;
+                while *text.add(n) != 0 {
+                    n += 1;
+                }
+                let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, n));
+                LocalFree(text.cast());
+                s
+            };
+            Ok(s)
+        })();
+        // SAFETY: `token` is a real handle from OpenProcessToken, closed once.
+        unsafe { CloseHandle(token) };
+        result
+    }
+
+    pub fn restrict_to_current_user(dir: &Path) -> Result<()> {
+        let sid = current_user_sid()?;
+        anyhow::ensure!(
+            sid.starts_with("S-") && sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+            "unexpected user SID"
+        );
+        // P = protected (do not inherit the parent's ACEs). OICI = inherited
+        // by files and subfolders. FA = full access. SY = LocalSystem.
+        let sddl = wide(format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)").as_ref());
+        let mut sd: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: `sddl` is NUL-terminated UTF-16; `sd` is a valid
+        // out-pointer and is freed with LocalFree below.
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd,
+                null_mut(),
+            )
+        };
+        if ok == 0 {
+            // SAFETY: plain FFI call with no arguments.
+            bail!(
+                "could not build the security descriptor (error {})",
+                unsafe { GetLastError() }
+            );
+        }
+        let path = wide(dir.as_os_str());
+        // SAFETY: `sd` is a valid descriptor until LocalFree; the DACL
+        // pointer we get points into it. `path` is NUL-terminated UTF-16.
+        let err = unsafe {
+            let mut present = 0;
+            let mut defaulted = 0;
+            let mut dacl: *mut ACL = null_mut();
+            let got = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted);
+            let err = if got == 0 || present == 0 || dacl.is_null() {
+                u32::MAX
+            } else {
+                SetNamedSecurityInfoW(
+                    path.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    null_mut(),
+                    null_mut(),
+                    dacl,
+                    std::ptr::null(),
+                )
+            };
+            LocalFree(sd);
+            err
+        };
+        if err != 0 {
+            bail!("SetNamedSecurityInfoW failed (error {err})");
+        }
+        Ok(())
+    }
+}
+
+/// The current Windows user's SID (for tests and diagnostics).
+#[cfg(windows)]
+pub fn current_user_sid() -> Result<String> {
+    winacl::current_user_sid()
+}
+
 /// Replaces `path` with `bytes` atomically (temp file in the same dir, then
-/// rename). The file is owner-only (`0600`) on Unix; on Windows it inherits
-/// the user-only ACL of the profile folder it lives in.
+/// rename). The file is owner-only: `0600` on Unix; on Windows it inherits
+/// the owner-only DACL that [`ensure_private_dir`] puts on its folder.
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().context("file has no parent dir")?;
     let name = path
@@ -178,6 +333,56 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
+        }
+    }
+
+    /// W-3 / SEC-14: on Windows the config dir gets a protected DACL (user +
+    /// SYSTEM only), even inside a parent that lets Authenticated Users
+    /// modify everything below it (like `C:\` on a default install), and
+    /// files written there inherit only those two entries.
+    #[cfg(windows)]
+    #[test]
+    fn windows_config_dir_is_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("loose");
+        std::fs::create_dir(&parent).unwrap();
+        // Authenticated Users (S-1-5-11): Modify, inherited by children.
+        let out = std::process::Command::new("icacls")
+            .arg(&parent)
+            .args(["/grant", "*S-1-5-11:(OI)(CI)M"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+
+        let home = parent.join("pigeon-home");
+        ensure_private_dir(&home).unwrap();
+        let file = home.join("devices.json");
+        write_private(&file, b"{}").unwrap();
+        let me = current_user_sid().unwrap();
+        for (path, must_be_protected) in [(&home, true), (&file, false)] {
+            let out = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(format!("(Get-Acl -LiteralPath '{}').Sddl", path.display()))
+                .output()
+                .unwrap();
+            let sddl = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let dacl = &sddl[sddl.find("D:").expect(&sddl)..];
+            if must_be_protected {
+                assert!(dacl.starts_with("D:P"), "not protected: {sddl}");
+            }
+            let trustees: Vec<&str> = dacl
+                .split('(')
+                .skip(1)
+                .map(|ace| ace.trim_end_matches(')').rsplit(';').next().unwrap())
+                .collect();
+            assert!(!trustees.is_empty(), "{sddl}");
+            for t in trustees {
+                assert!(
+                    t == me || t == "SY",
+                    "{} grants access to {t}: {sddl}",
+                    path.display()
+                );
+            }
         }
     }
 
