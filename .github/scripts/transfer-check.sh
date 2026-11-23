@@ -38,7 +38,7 @@ rm -f "$out" "$out.part"
 log="$mode.log"
 
 start=$(date +%s%N)
-"$pigeon" ${flags[@]+"${flags[@]}"} get "$remote" -o "$out" | tee "$log"
+"$pigeon" get ${flags[@]+"${flags[@]}"} "$remote" -o "$out" | tee "$log"
 end=$(date +%s%N)
 
 actual=$(sha256 "$out")

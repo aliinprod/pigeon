@@ -93,7 +93,7 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// A pairing code like `otter-plaza-crumb-vivid`. Secret: never logged,
+/// A pairing code like `otter-plaza-crumb-tulip`. Secret: never logged,
 /// never sent over the network, zeroed on drop. There is deliberately no
 /// `Display`; use [`PairingCode::reveal`] where showing it is intended.
 #[derive(Clone)]
@@ -500,6 +500,39 @@ mod tests {
         );
         assert_eq!(words.first(), Some(&"acid"));
         assert_eq!(words.last(), Some(&"zoom"));
+    }
+
+    /// N1 (Proof): every example code in the docs must be a real code, or a
+    /// user who types it to try things out gets a confusing "typo" error.
+    #[test]
+    fn example_codes_in_the_docs_are_valid() {
+        let docs = [
+            include_str!("../../../README.md"),
+            include_str!("../../../docs/security/PAIRING.md"),
+            include_str!("pair.rs"),
+        ];
+        let mut found = 0;
+        for doc in docs {
+            for token in doc.split('`').skip(1).step_by(2) {
+                let parts: Vec<&str> = token.split('-').collect();
+                let looks_like_code = parts.len() == CODE_WORDS
+                    && parts
+                        .iter()
+                        // Code words have 3-5 letters (`w-w-w-w` is a placeholder).
+                        .all(|p| p.len() >= 3 && p.chars().all(|c| c.is_ascii_lowercase()));
+                if looks_like_code {
+                    found += 1;
+                    assert!(
+                        PairingCode::parse(token).is_ok(),
+                        "example code `{token}` is not made of wordlist words"
+                    );
+                }
+            }
+        }
+        assert!(
+            found >= 3,
+            "expected example codes in README, PAIRING.md and pair.rs"
+        );
     }
 
     #[test]

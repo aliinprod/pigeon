@@ -43,7 +43,7 @@ travel home. The usual channel (email/chat to self) is readable by employer IT
   `EndpointAddr` + 16-byte random `invite_id` + expiry. Contains **no secret**.
 - **Pairing code** (shown only on the Mac screen, never sent over the
   network, never logged): 4 words from the EFF short wordlist (1296 words,
-  ~41 bits), e.g. `otter-plaza-crumb-vivid`. The owner writes it down or
+  ~41 bits), e.g. `otter-plaza-crumb-tulip`. The owner writes it down or
   photographs the screen with their phone.
 - **QR** (for a phone or camera-equipped PC later): link + code together,
   labelled "scan only, do not share". Pairing uses the same protocol.

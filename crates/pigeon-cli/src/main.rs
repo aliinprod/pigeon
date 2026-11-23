@@ -12,12 +12,14 @@
 //! `--code-file FILE`, the `PIGEON_PAIR_CODE` environment variable, or typed
 //! at the prompt, in that order.
 //!
-//! `--relay-only` disables direct (UDP hole-punched) paths, so every byte goes
-//! through the relay. Useful for testing the fallback path.
+//! `ls --relay-only` / `get --relay-only` disable direct (UDP hole-punched)
+//! paths, so every byte goes through the relay. Useful for testing the
+//! fallback path.
 
 use std::{
     io::{BufRead, IsTerminal, Write},
     path::{Path, PathBuf},
+    process::ExitCode,
 };
 
 use anyhow::{Context, Result};
@@ -26,11 +28,12 @@ use iroh::{Endpoint, endpoint::presets};
 use pigeon_core::{
     client,
     config::Home,
-    devices::{AGENTS_FILE, AgentList, PairedAgent},
+    devices::{AGENTS_FILE, AgentList, PairedAgent, trusted_relay_hint},
     display_safe, fingerprint,
     keystore::CLIENT_KEY,
     pair::{self, InviteLink, PairingCode},
 };
+use zeroize::Zeroizing;
 
 /// Environment variable that may hold the pairing code.
 const CODE_ENV: &str = "PIGEON_PAIR_CODE";
@@ -38,9 +41,9 @@ const CODE_ENV: &str = "PIGEON_PAIR_CODE";
 #[derive(Parser)]
 #[command(name = "pigeon", version, about = "Your files know the way home.")]
 struct Cli {
-    /// Never use a direct connection; send everything through the relay.
-    #[arg(long, global = true)]
-    relay_only: bool,
+    /// Show the full chain of causes when something fails.
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -62,15 +65,20 @@ enum Command {
     },
     /// List a folder on the agent.
     Ls {
+        /// Folder inside the share, with `/` between parts ("" = the top).
         #[arg(default_value = "")]
         path: String,
         /// Which paired agent (name or fingerprint), if there are several.
         #[arg(long)]
         agent: Option<String>,
+        /// Never use a direct connection; send everything through the relay.
+        #[arg(long)]
+        relay_only: bool,
     },
     /// Download one file (resumes from OUT.part if present). Never overwrites:
     /// if OUT exists, saves as "OUT (1)", "OUT (2)", ...
     Get {
+        /// File inside the share, with `/` between parts, as `ls` shows it.
         path: String,
         /// Output file (default: the file name from PATH, in the current folder).
         #[arg(short, long)]
@@ -78,16 +86,48 @@ enum Command {
         /// Which paired agent (name or fingerprint), if there are several.
         #[arg(long)]
         agent: Option<String>,
+        /// Never use a direct connection; send everything through the relay.
+        #[arg(long)]
+        relay_only: bool,
     },
     /// List the agents this device is paired with.
     Agents,
-    /// Forget a paired agent on this device (revoke it on the agent too).
-    Forget { agent: String },
+    /// Forget an agent on this device. To cut this device off on the agent
+    /// as well, run `pigeon-agent revoke` there.
+    Forget {
+        /// Agent name or fingerprint, as shown by `pigeon agents`.
+        agent: String,
+    },
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let verbose = cli.verbose;
+    match real_main(cli).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{}", render_error(&e, verbose));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// N3: by default one line plus the root cause (once); `-v` shows every cause.
+fn render_error(e: &anyhow::Error, verbose: bool) -> String {
+    if verbose {
+        return format!("Error: {e:?}");
+    }
+    let top = e.to_string();
+    let root = e.root_cause().to_string();
+    if e.chain().count() > 1 && root != top {
+        format!("Error: {top}\n  cause: {root}\n  (run with -v for details)")
+    } else {
+        format!("Error: {top}")
+    }
+}
+
+async fn real_main(cli: Cli) -> Result<()> {
     let home = Home::from_env()?;
     let agents_path = home.dir.join(AGENTS_FILE);
     match cli.command {
@@ -105,11 +145,21 @@ async fn main() -> Result<()> {
         )?)?),
         _ => None,
     };
+    let relay_only = matches!(
+        cli.command,
+        Command::Ls {
+            relay_only: true,
+            ..
+        } | Command::Get {
+            relay_only: true,
+            ..
+        }
+    );
 
     // A stable device identity: the agent's allow-list holds its public key.
     let (key, _store, _created) = home.device_key(CLIENT_KEY)?;
     let mut builder = Endpoint::builder(presets::N0).secret_key(key);
-    if cli.relay_only {
+    if relay_only {
         builder = builder.clear_ip_transports();
     }
     let endpoint = builder.bind().await?;
@@ -120,9 +170,9 @@ async fn main() -> Result<()> {
 
 /// Reads a secret (`what`) from `file`, else the environment variable `env`,
 /// else one line on stdin (with a prompt on a terminal). The value is never
-/// echoed in errors.
-fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<String> {
-    let text = if let Some(file) = file {
+/// echoed in errors, and every copy we make is zeroed when dropped (W-7).
+fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<Zeroizing<String>> {
+    let text = Zeroizing::new(if let Some(file) = file {
         std::fs::read_to_string(file)
             .with_context(|| format!("could not read the {what} from {}", file.display()))?
     } else if let Ok(v) = std::env::var(env) {
@@ -133,15 +183,18 @@ fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<String> {
             eprint!("Type the {what} shown on the agent and press Enter: ");
             std::io::stderr().flush()?;
         }
-        let mut line = String::new();
+        let mut line = Zeroizing::new(String::new());
         stdin
             .lock()
             .read_line(&mut line)
             .with_context(|| format!("could not read the {what} from stdin"))?;
-        line
-    };
-    let text = text.trim().to_string();
-    anyhow::ensure!(!text.is_empty(), "no {what} given");
+        std::mem::take(&mut *line)
+    });
+    let text = Zeroizing::new(text.trim().to_string());
+    anyhow::ensure!(
+        !text.is_empty(),
+        "no {what} given: type it at the prompt, or use --code-file FILE or ${env}"
+    );
     Ok(text)
 }
 
@@ -202,7 +255,8 @@ async fn run(
                     .map(|n| n.trim().to_string())
                     .filter(|n| !n.is_empty())
                     .unwrap_or_else(|| format!("agent {fp}")),
-                relay_url: link.addr.relay_urls().next().cloned(),
+                // W-6: keep only a default (n0) relay as a hint.
+                relay_url: trusted_relay_hint(link.addr.relay_urls().next()),
                 paired_at: pair::now_secs(),
             };
             let mut list = AgentList::load(agents_path)?;
@@ -217,7 +271,7 @@ async fn run(
                 fingerprint(&endpoint.id())
             );
         }
-        Command::Ls { path, agent } => {
+        Command::Ls { path, agent, .. } => {
             let agent = AgentList::load(agents_path)?
                 .pick(agent.as_deref())?
                 .clone();
@@ -228,7 +282,9 @@ async fn run(
                 println!("{kind}  {:>14}  {:>10}  {name}", e.size, e.mtime);
             }
         }
-        Command::Get { path, out, agent } => {
+        Command::Get {
+            path, out, agent, ..
+        } => {
             let agent = AgentList::load(agents_path)?
                 .pick(agent.as_deref())?
                 .clone();
@@ -330,6 +386,41 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(err.contains("invite link"), "{err}");
+    }
+
+    /// N7: `--relay-only` exists only where it does something.
+    #[test]
+    fn relay_only_is_only_on_ls_and_get() {
+        let cli = Cli::try_parse_from(["pigeon", "get", "a.txt", "--relay-only"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Get {
+                relay_only: true,
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(["pigeon", "ls", "--relay-only"]).is_ok());
+        assert!(Cli::try_parse_from(["pigeon", "agents", "--relay-only"]).is_err());
+        assert!(Cli::try_parse_from(["pigeon", "forget", "x", "--relay-only"]).is_err());
+    }
+
+    /// N3: one friendly line plus the root cause by default; everything with -v.
+    #[test]
+    fn errors_are_short_unless_verbose() {
+        let e = anyhow::anyhow!("error 120: peer doesn't support any known protocol")
+            .context("aborted by peer")
+            .context("could not pair: make a new invite");
+        let short = render_error(&e, false);
+        assert!(short.starts_with("Error: could not pair"), "{short}");
+        assert_eq!(short.matches("error 120").count(), 1, "{short}");
+        assert!(!short.contains("aborted by peer"), "{short}");
+        let long = render_error(&e, true);
+        assert!(
+            long.contains("aborted by peer") && long.contains("Caused by"),
+            "{long}"
+        );
+        let single = render_error(&anyhow::anyhow!("not paired"), false);
+        assert_eq!(single, "Error: not paired");
     }
 
     #[test]

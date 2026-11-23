@@ -2221,6 +2221,7 @@ dependencies = [
  "pigeon-core",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

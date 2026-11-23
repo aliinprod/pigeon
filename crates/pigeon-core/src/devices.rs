@@ -57,6 +57,18 @@ impl PairedAgent {
     }
 }
 
+/// The relay hint worth keeping from an invite link: only one of iroh's
+/// default (n0) relays. A tampered link (e.g. a forwarded email) could name
+/// an attacker's relay, which would then see this PC's IP address and usage
+/// times on every later `ls`/`get` (W-6). Other relays are used for the
+/// pairing connection only; afterwards the agent is found by its ID.
+pub fn trusted_relay_hint(url: Option<&RelayUrl>) -> Option<RelayUrl> {
+    let url = url?;
+    iroh::defaults::prod::default_relay_map()
+        .contains(url)
+        .then(|| url.clone())
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentList {
     pub agents: Vec<PairedAgent>,
@@ -303,6 +315,16 @@ mod tests {
         }
         assert_eq!(DeviceList::load(&path).unwrap().devices.len(), 50);
         assert!(!dir.path().join("devices.json.lock").exists());
+    }
+
+    #[test]
+    fn only_default_relays_are_kept_as_hints() {
+        let n0: Vec<RelayUrl> = iroh::defaults::prod::default_relay_map().urls();
+        assert!(!n0.is_empty());
+        assert_eq!(trusted_relay_hint(Some(&n0[0])), Some(n0[0].clone()));
+        let evil: RelayUrl = "https://relay.attacker.example".parse().unwrap();
+        assert_eq!(trusted_relay_hint(Some(&evil)), None);
+        assert_eq!(trusted_relay_hint(None), None);
     }
 
     #[test]
