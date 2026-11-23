@@ -13,9 +13,19 @@ serde.workspace = true
 postcard.workspace = true
 anyhow.workspace = true
 sha2.workspace = true
-subtle.workspace = true
 data-encoding.workspace = true
 getrandom.workspace = true
+zeroize.workspace = true
+spake2.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

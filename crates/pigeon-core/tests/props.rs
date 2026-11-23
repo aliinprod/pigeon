@@ -1,15 +1,17 @@
-//! Property tests (stable Rust, no nightly needed) for the three parsers that
-//! see untrusted input: the frame decoder, the ticket decoder and the path
-//! guard. Random inputs must never panic, never allocate past the frame limit
-//! and never resolve outside the share root (SEC-03, SEC-05, SEC-06).
+//! Property tests (stable Rust, no nightly needed) for the parsers that see
+//! untrusted input: the frame decoder (file and pairing frames), the invite
+//! link and pairing code parsers, and the path guard. Random inputs must
+//! never panic, never allocate past the frame limit and never resolve outside
+//! the share root (SEC-03, SEC-05, SEC-06, PAIRING.md P-T11).
 //!
 //! Coverage-guided fuzzing (cargo-fuzz) needs nightly and is a later step.
 
 use std::path::Path;
 
 use pigeon_core::{
-    Ticket, guard,
-    proto::{Hello, MAX_HELLO_LEN, Request, Response, read_frame, read_frame_max, write_frame},
+    guard,
+    pair::{AgentMsg, InviteLink, MAX_PAIR_FRAME, PairConfirm, PairStart, PairingCode},
+    proto::{MAX_REQUEST_LEN, Request, Response, read_frame, read_frame_max, write_frame},
 };
 use proptest::prelude::*;
 
@@ -26,9 +28,11 @@ proptest! {
     #[test]
     fn frame_decoder_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..2048)) {
         rt().block_on(async {
-            let _ = read_frame_max::<_, Hello>(&mut bytes.as_slice(), MAX_HELLO_LEN).await;
-            let _ = read_frame::<_, Request>(&mut bytes.as_slice()).await;
+            let _ = read_frame_max::<_, Request>(&mut bytes.as_slice(), MAX_REQUEST_LEN).await;
             let _ = read_frame::<_, Response>(&mut bytes.as_slice()).await;
+            let _ = read_frame_max::<_, PairStart>(&mut bytes.as_slice(), MAX_PAIR_FRAME).await;
+            let _ = read_frame_max::<_, PairConfirm>(&mut bytes.as_slice(), MAX_PAIR_FRAME).await;
+            let _ = read_frame_max::<_, AgentMsg>(&mut bytes.as_slice(), MAX_PAIR_FRAME).await;
         });
     }
 
@@ -39,19 +43,26 @@ proptest! {
         let mut wire = (body.len() as u32).to_be_bytes().to_vec();
         wire.extend_from_slice(&body);
         rt().block_on(async {
-            let _ = read_frame_max::<_, Hello>(&mut wire.as_slice(), MAX_HELLO_LEN).await;
-            let _ = read_frame::<_, Request>(&mut wire.as_slice()).await;
+            let _ = read_frame_max::<_, Request>(&mut wire.as_slice(), MAX_REQUEST_LEN).await;
             let _ = read_frame::<_, Response>(&mut wire.as_slice()).await;
+            let _ = read_frame_max::<_, PairStart>(&mut wire.as_slice(), MAX_PAIR_FRAME).await;
+            let _ = read_frame_max::<_, PairConfirm>(&mut wire.as_slice(), MAX_PAIR_FRAME).await;
+            let _ = read_frame_max::<_, AgentMsg>(&mut wire.as_slice(), MAX_PAIR_FRAME).await;
         });
     }
 
     /// Any length prefix above the limit is refused from the prefix alone.
     #[test]
-    fn oversized_prefix_is_refused(len in (MAX_HELLO_LEN + 1)..=u32::MAX) {
+    fn oversized_prefix_is_refused(len in (MAX_PAIR_FRAME + 1)..=u32::MAX) {
         let wire = len.to_be_bytes();
-        let res = rt().block_on(read_frame_max::<_, Hello>(&mut wire.as_slice(), MAX_HELLO_LEN));
+        let res = rt().block_on(read_frame_max::<_, PairStart>(&mut wire.as_slice(), MAX_PAIR_FRAME));
         let err = format!("{:#}", res.unwrap_err());
         prop_assert!(err.contains("too large"), "{}", err);
+        if len > MAX_REQUEST_LEN {
+            let res = rt().block_on(read_frame_max::<_, Request>(&mut wire.as_slice(), MAX_REQUEST_LEN));
+            let err = format!("{:#}", res.unwrap_err());
+            prop_assert!(err.contains("too large"), "{}", err);
+        }
     }
 
     /// Requests survive an encode/decode round trip unchanged.
@@ -66,30 +77,44 @@ proptest! {
         prop_assert_eq!(req, back);
     }
 
-    /// Ticket parsing of arbitrary text never panics.
+    /// Invite link parsing of arbitrary text never panics.
     #[test]
-    fn ticket_parse_never_panics(s in ".{0,400}") {
-        let _ = s.parse::<Ticket>();
-        let _ = format!("pigeon{s}").parse::<Ticket>();
+    fn invite_link_parse_never_panics(s in ".{0,400}") {
+        let _ = s.parse::<InviteLink>();
+        let _ = format!("pigeon-invite-{s}").parse::<InviteLink>();
     }
 
     /// Well-formed base32 with random content never panics.
     #[test]
-    fn ticket_base32_fuzz_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..300)) {
+    fn invite_link_base32_fuzz_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..300)) {
         let text = format!(
-            "pigeon{}",
+            "pigeon-invite-{}",
             data_encoding::BASE32_NOPAD.encode(&bytes).to_ascii_lowercase()
         );
-        let _ = text.parse::<Ticket>();
+        let _ = text.parse::<InviteLink>();
     }
 
-    /// Any token survives Display -> FromStr.
+    /// Any link survives Display -> FromStr.
     #[test]
-    fn ticket_roundtrip(token in any::<[u8; 32]>(), seed in any::<[u8; 32]>()) {
+    fn invite_link_roundtrip(id in any::<[u8; 16]>(), seed in any::<[u8; 32]>(), exp in any::<u64>()) {
         let key = iroh::SecretKey::from_bytes(&seed);
-        let t = Ticket { addr: iroh::EndpointAddr::new(key.public()), token };
-        let back: Ticket = t.to_string().parse().unwrap();
-        prop_assert_eq!(t, back);
+        let link = InviteLink { addr: iroh::EndpointAddr::new(key.public()), invite_id: id, expires_at: exp };
+        let back: InviteLink = link.to_string().parse().unwrap();
+        prop_assert_eq!(link, back);
+    }
+
+    /// Typed pairing codes: never panic, and the error never echoes input.
+    #[test]
+    fn pairing_code_parse_never_panics_or_echoes(s in ".{0,80}") {
+        if let Err(e) = PairingCode::parse(&s) {
+            // Errors are fixed templates plus a count: nothing from the input.
+            let shape: String = format!("{e:#}").chars().filter(|c| !c.is_ascii_digit()).collect();
+            prop_assert!(
+                shape == "a pairing code has  words, got "
+                    || shape == "word  of the pairing code is not a code word (typo?)",
+                "{}", shape
+            );
+        }
     }
 }
 

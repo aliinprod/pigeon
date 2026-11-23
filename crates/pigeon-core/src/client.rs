@@ -8,15 +8,15 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use iroh::{
-    Endpoint,
-    endpoint::{Connection, RecvStream, SendStream},
+    Endpoint, EndpointAddr,
+    endpoint::{Connection, ConnectionError, RecvStream, SendStream},
 };
 use tokio::io::AsyncWriteExt;
 
 use crate::{
-    ALPN, Ticket,
-    agent::sha256_file,
-    proto::{Entry, Hello, PROTOCOL_VERSION, Request, Response, read_frame, write_frame},
+    ALPN,
+    agent::{close, sha256_file},
+    proto::{Entry, Request, Response, read_frame, write_frame},
 };
 
 /// How the bytes reached us, as seen by the client at the end of a transfer.
@@ -74,32 +74,53 @@ impl GetStats {
     }
 }
 
-/// Opens a connection and sends the hello + request. Returns the open streams.
+/// Opens a connection and sends the request. Returns the open streams.
+/// The agent identifies us by our endpoint key (iroh TLS); nothing secret
+/// goes on the wire.
 async fn request(
     endpoint: &Endpoint,
-    ticket: &Ticket,
+    agent: &EndpointAddr,
     req: &Request,
 ) -> Result<(Connection, SendStream, RecvStream)> {
     let conn = endpoint
-        .connect(ticket.addr.clone(), ALPN)
+        .connect(agent.clone(), ALPN)
         .await
-        .context("could not connect to the agent")?;
-    let (mut send, recv) = conn.open_bi().await?;
-    let hello = Hello {
-        version: PROTOCOL_VERSION,
-        token: ticket.token,
-    };
-    write_frame(&mut send, &hello).await?;
-    write_frame(&mut send, req).await?;
-    send.finish()?;
-    Ok((conn, send, recv))
+        .context("could not connect to the agent (is `pigeon-agent share` running?)")?;
+    let streams = async {
+        let (mut send, recv) = conn.open_bi().await?;
+        write_frame(&mut send, req).await?;
+        send.finish()?;
+        anyhow::Ok((send, recv))
+    }
+    .await;
+    match streams {
+        Ok((send, recv)) => Ok((conn, send, recv)),
+        Err(e) => Err(explain(&conn, e)),
+    }
+}
+
+/// Turns "connection closed" into the agent's reason, when it gave one.
+fn explain(conn: &Connection, err: anyhow::Error) -> anyhow::Error {
+    match conn.close_reason() {
+        Some(ConnectionError::ApplicationClosed(c)) if c.error_code == close::NOT_PAIRED.into() => {
+            anyhow::anyhow!(
+                "the agent refused this device: it is not paired (or was revoked). \
+                 Run `pigeon-agent pair` on the agent and `pigeon pair <LINK>` here"
+            )
+        }
+        Some(ConnectionError::ApplicationClosed(c)) if c.error_code == close::BUSY.into() => {
+            anyhow::anyhow!("the agent is busy (too many connections); try again in a moment")
+        }
+        _ => err,
+    }
 }
 
 /// Lists a directory on the agent ("" = share root).
-pub async fn list(endpoint: &Endpoint, ticket: &Ticket, path: &str) -> Result<Vec<Entry>> {
+pub async fn list(endpoint: &Endpoint, agent: &EndpointAddr, path: &str) -> Result<Vec<Entry>> {
     let req = Request::List { path: path.into() };
-    let (conn, _send, mut recv) = request(endpoint, ticket, &req).await?;
+    let (conn, _send, mut recv) = request(endpoint, agent, &req).await?;
     let response: Result<Response> = read_frame(&mut recv).await;
+    let response = response.map_err(|e| explain(&conn, e));
     conn.close(0u32.into(), b"done");
     match response? {
         Response::List(entries) => Ok(entries),
@@ -146,7 +167,12 @@ fn exists(p: &Path) -> bool {
 /// its current size (or dropped, if the agent says it is longer than the
 /// file). After the transfer the SHA-256 of the whole file is checked against
 /// the agent's hash and the file is renamed to `out`.
-pub async fn get(endpoint: &Endpoint, ticket: &Ticket, path: &str, out: &Path) -> Result<GetStats> {
+pub async fn get(
+    endpoint: &Endpoint,
+    agent: &EndpointAddr,
+    path: &str,
+    out: &Path,
+) -> Result<GetStats> {
     let part = part_path(out);
     let offset = match tokio::fs::metadata(&part).await {
         Ok(m) => m.len(),
@@ -158,8 +184,10 @@ pub async fn get(endpoint: &Endpoint, ticket: &Ticket, path: &str, out: &Path) -
         path: path.into(),
         offset,
     };
-    let (conn, _send, mut recv) = request(endpoint, ticket, &req).await?;
-    let result = receive(&mut recv, &part, offset).await;
+    let (conn, _send, mut recv) = request(endpoint, agent, &req).await?;
+    let result = receive(&mut recv, &part, offset)
+        .await
+        .map_err(|e| explain(&conn, e));
     let route = route(&conn);
     conn.close(0u32.into(), b"done");
     let (size, offset, expected) = result?;

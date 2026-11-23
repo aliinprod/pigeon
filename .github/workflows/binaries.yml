@@ -60,6 +60,46 @@ jobs:
             dist/SHA256SUMS.txt
           if-no-files-found: error
 
+  linux:
+    name: Linux x86_64 (static, musl)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+      - name: add the target to the repo toolchain
+        run: rustup target add x86_64-unknown-linux-musl
+      - name: install musl tools
+        # ring compiles a little C/asm; musl-gcc lets it link statically.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: musl
+      - name: build
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl -p pigeon-agent -p pigeon-cli
+      - name: package
+        run: |
+          mkdir -p dist/pigeon-linux-x86_64
+          for bin in pigeon-agent pigeon; do
+            cp "target/x86_64-unknown-linux-musl/release/$bin" dist/pigeon-linux-x86_64/
+            file "dist/pigeon-linux-x86_64/$bin"
+          done
+          dist/pigeon-linux-x86_64/pigeon --version
+          dist/pigeon-linux-x86_64/pigeon-agent --version
+          # Artifacts are zipped without Unix permissions; a tarball keeps +x.
+          tar -C dist -czf dist/pigeon-linux-x86_64.tar.gz pigeon-linux-x86_64
+          cd dist && sha256sum pigeon-linux-x86_64.tar.gz pigeon-linux-x86_64/* | tee SHA256SUMS.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pigeon-linux-x86_64
+          path: |
+            dist/pigeon-linux-x86_64.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
   windows:
     name: Windows x64
     runs-on: windows-latest

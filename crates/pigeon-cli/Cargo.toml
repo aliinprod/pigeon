@@ -16,3 +16,7 @@ iroh.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,7 +1,9 @@
 # Pairing design review (week 2)
 
 Owner: Warden. Implementer: Anvil (core, agent, CLI), Canvas (UI). Status:
-**approved design, not implemented**. Replaces the Day-1 bearer token in the
+**approved design, implemented in week 1** (CLI only; the app comes later).
+Deviations and deferred items are listed in [section 9](#9-implementation-notes-week-1).
+Replaces the Day-1 bearer token in the
 ticket (threat TH-02 / risk R1 in [THREAT_MODEL.md](THREAT_MODEL.md)).
 Requirements: SEC-08, SEC-09, SEC-11, SEC-19, SEC-22.
 
@@ -41,7 +43,7 @@ travel home. The usual channel (email/chat to self) is readable by employer IT
   `EndpointAddr` + 16-byte random `invite_id` + expiry. Contains **no secret**.
 - **Pairing code** (shown only on the Mac screen, never sent over the
   network, never logged): 4 words from the EFF short wordlist (1296 words,
-  ~41 bits), e.g. `otter-plaza-crumb-vivid`. The owner writes it down or
+  ~41 bits), e.g. `otter-plaza-crumb-tulip`. The owner writes it down or
   photographs the screen with their phone.
 - **QR** (for a phone or camera-equipped PC later): link + code together,
   labelled "scan only, do not share". Pairing uses the same protocol.
@@ -158,3 +160,51 @@ temp file + atomic rename. Anyone who can edit it already runs as the owner.
   token auth.
 - Wordlist: embed the EFF short wordlist (CC BY 3.0 US, attribution in
   `NOTICE`); select words with `getrandom` + rejection sampling.
+
+## 9. Implementation notes (week 1)
+
+Code: [`pair.rs`](../../crates/pigeon-core/src/pair.rs) (protocol, code,
+invite, link), [`agent.rs`](../../crates/pigeon-core/src/agent.rs) (allow-list
+check, pairing handler, revoke), [`keystore.rs`](../../crates/pigeon-core/src/keystore.rs),
+[`devices.rs`](../../crates/pigeon-core/src/devices.rs), the two binaries.
+Tests: [`tests/pairing.rs`](../../crates/pigeon-core/tests/pairing.rs) plus the
+unit / property tests named in [REQUIREMENTS.md](REQUIREMENTS.md).
+
+Implemented as designed: P1 handshake (SPAKE2 `=0.4.0` Ed25519Group A/B with
+both endpoint IDs as identities; RFC 5705 exporter with label
+`pigeon pair v1` and context `invite_id`; HKDF-SHA256 + HMAC-SHA256 key
+confirmation both ways over `T`; constant-time verify), single-use invite,
+default 12 h / max 24 h, 3 attempts decremented before the PAKE, one
+handshake at a time, pairing ALPN only while an invite is active, 10 s per
+step / 30 s total, 128-byte frames, `PairStart.version`, allow-list checked
+before `accept_bi()`, `devices` / `revoke` / `reset`, client `forget`,
+`Hello.token` and `pigeon/0` removed with no fallback, EFF wordlist with
+`getrandom` rejection sampling, all P-T1..P-T12 tests.
+
+Deviations (each with the reason):
+
+| # | Design says | Implemented | Why |
+|---|---|---|---|
+| D1 | EFF short list, 1296 words | 1295 words: `yo-yo` removed | `-` separates code words, and `yoyo` is already in the list. 4 words = 41.35 bits instead of 41.36. |
+| D2 | Keychain item `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | Generic password in the **login keychain**, not synchronizable (so not in iCloud), via `security-framework =3.7.0` | The accessibility attribute only exists in the data-protection keychain, which needs a signed app with a keychain-access-group entitlement. An unsigned CLI gets `errSecMissingEntitlement`. Revisit when binaries are signed (SEC-27). |
+| D3 | Windows Credential Manager, user scope | Generic credential `Pigeon/<name>`, `CRED_PERSIST_LOCAL_MACHINE` (= kept across logons on this PC, not roaming; still per user and DPAPI-protected), via `windows-sys =0.61.2` | The Win32 API needs a small `unsafe` FFI block (with the Windows DACL code in `config.rs` from W-3, the only `unsafe` in the workspace; the crate is `#![deny(unsafe_code)]` with documented exceptions). Chosen over the `keyring` crate to avoid a new dependency tree for 3 calls. |
+| D4 | `PairOk { mac, agent_name }` | `AgentMsg::Ok { mac }`; the client names the agent itself (`pigeon pair --name`) | One less field from the other side to sanitize; the owner names both ends anyway. |
+| D5 | Invite in memory "or in the keystore" | Always in the keystore (it holds the code), so `pigeon-agent pair` (a separate process) can hand it to the running `share`, which polls it every 2 s. The allow-list file is polled every 500 ms. | No IPC socket (keeps "no listening ports" trivially true). A running agent never revives a spent invite ID (also across restarts: `spent-invites.json`, W-5), never lets a stale handshake burn a newer invite (W-1), and never overwrites a newer invite. Invites record the agent key they were made for, so a `share` that kept running through `reset` ignores them and says so (M1). The polling loop is `pigeon_core::agent::watch`, so the CLI revoke path is tested (W-8). |
+| D6 | Fallback: none | `PIGEON_KEYSTORE=file` (opt-in) stores secrets in `0600` files under the config dir; also the default on OSes other than macOS/Windows. **Refused on Windows** (W-3) | For headless machines without a usable keystore. Weaker; documented in `keystore.rs`. CI uses the real keystores. |
+| D7 | Client stores the agent `EndpointAddr` | Stores the `EndpointId`, plus the link's relay URL only if it is one of iroh's default n0 relays (W-6); no IPs | Direct IPs go stale; iroh address lookup finds current ones from the ID. A tampered link must not pin a foreign relay for every later session. |
+| D8 | (not specified) | `PairStart` is read and checked (version, active invite ID) within 3 s *before* the one-at-a-time pairing lock is taken; one pairing connection per peer (W-2) | Otherwise anyone who knows the agent ID could keep the owner's pairing refused as busy. |
+
+Deferred (not in this PR):
+
+- OS notification on a new pairing (the agent prints a log line instead).
+- `last_seen` per device (would need the running agent to rewrite
+  `devices.json` on every connection, racing with `revoke`).
+- QR code output (CLI only for now; the app will show it).
+- Removing `$PIGEON_PAIR_CODE` from the client's environment after reading
+  it (`std::env::remove_var` is `unsafe` in edition 2024 once threads run).
+  `spake2` 0.4.0 has no zeroize, so its copy of the password and its secret
+  scalar are not wiped (THREAT_MODEL R13).
+
+Measured: revoke latency through the CLI (file -> `watch` poll -> close) is
+about 0.43 s on loopback (`revoke_through_the_devices_file_closes_a_live_transfer`,
+limit 1.5 s); in-process (P-T8) under 1 ms.
