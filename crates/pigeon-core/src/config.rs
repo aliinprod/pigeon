@@ -442,8 +442,11 @@ mod tests {
                 .collect();
             assert!(!trustees.is_empty(), "{sddl}");
             for t in trustees {
+                // SDDL writes well-known SIDs as aliases: the built-in local
+                // Administrator account (RID 500, the CI runner's user) is "LA".
+                let is_me = t == me || (t == "LA" && me.ends_with("-500"));
                 assert!(
-                    t == me || t == "SY",
+                    is_me || t == "SY",
                     "{} grants access to {t}: {sddl}",
                     path.display()
                 );
