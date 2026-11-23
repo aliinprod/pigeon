@@ -22,3 +22,10 @@ Format per day: **Did / Broke / Next**, plus numbers and a screenshot when there
 - **Did:** Coming-soon site live at https://flypigeon.pages.dev (EN/UZ/RU, FAQ). New bots: Plume (web design) and Warden (security). Security foundation: threat model, 28 requirements, pairing design, cargo-deny + gitleaks in CI, all actions pinned to SHAs, 9 property tests.
 - **Broke:** Warden found the Day-1 ticket is effectively a password with no expiry (fix: week-2 pairing) and fixed 5 small issues; Proof caught Warden's own filter mangling Persian names and emoji.
 - **Next:** Agent on the real office Mac, fetch from home; then pairing. Decide on our own relay after seeing whether the office allows a direct path.
+
+## Day 4 — 2026-11-23
+- **Did:** First real-world test. Agent on the office Mac (`pigeon-agent share ~/Documents/ForHome`), client on the home Windows PC, two different networks. The office firewall allowed hole punching: **direct path**. Started week-1 work: pairing, key storage, connection limits.
+- **Result:** 50 MiB in 2.44 s (21.5 MB/s, direct), SHA-256 match. Three small files (3.6 KB to 101 KB) ~1 s each, all direct, all hashes match. Most of that second is connection setup.
+- **Broke:** Nothing in the transfer. The agent printed a confusing `incoming connection failed: ... authentication failed` from an aborted QUIC handshake (not our token check); log wording to fix. Learned that pasting shell commands into the agent's terminal queues them instead of running them; the app will remove the terminal.
+- **Decision:** No own relay for now; the free iroh relay is only used for the introduction when the direct path works.
+- **Next:** Pairing (SPAKE2 4-word code, device allow-list, revoke), key storage (Keychain / DPAPI), connection caps and idle timeout.
