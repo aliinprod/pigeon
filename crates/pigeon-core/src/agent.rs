@@ -447,17 +447,22 @@ impl Agent {
         Ok((invite.code(), invite.device_name.clone()))
     }
 
-    /// Records a wrong code. Returns the attempts left; burns the invite at 0.
+    /// Records a wrong code for invite `id`. Returns its attempts left and
+    /// burns it at 0. If `id` is no longer the active invite (replaced while
+    /// this handshake ran), the active one is left alone (W-1) and 0 is
+    /// returned: the old invite is gone either way.
     fn failed_attempt(&self, id: &[u8; 16]) -> u8 {
         let mut current = self.inner.invite.lock().expect("invite poisoned");
-        let left = match current.as_ref() {
-            Some(invite) if invite.invite_id == *id => invite.attempts_left,
+        match current.as_ref() {
+            Some(invite) if invite.invite_id == *id => {
+                let left = invite.attempts_left;
+                if left == 0 {
+                    self.clear_invite(&mut current);
+                }
+                left
+            }
             _ => 0,
-        };
-        if left == 0 {
-            self.clear_invite(&mut current);
         }
-        left
     }
 
     /// Consumes invite `id` and adds `device` to the allow-list.

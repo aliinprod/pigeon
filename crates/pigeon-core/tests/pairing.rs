@@ -13,9 +13,13 @@ use pigeon_core::{
     PAIR_ALPN,
     agent::ServeOptions,
     client,
-    pair::{self, DEFAULT_TTL, Invite, InviteLink, PairingCode},
-    proto::Request,
+    pair::{
+        self, AgentMsg, DEFAULT_TTL, Invite, InviteLink, MAX_PAIR_FRAME, PAIR_VERSION, PairConfirm,
+        PairStart, PairingCode,
+    },
+    proto::{Request, read_frame_max, write_frame},
 };
+use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 /// An agent with an empty allow-list (deny by default) and an active invite.
 async fn with_invite() -> (Setup, InviteLink, PairingCode) {
@@ -43,6 +47,19 @@ fn wrong(code: &PairingCode) -> PairingCode {
 
 async fn new_client() -> Endpoint {
     local_endpoint(vec![]).await
+}
+
+/// Pairs `s.client`, retrying while the agent finishes an earlier handshake.
+async fn pair_eventually(s: &Setup, link: &InviteLink, code: &PairingCode) {
+    let mut last = None;
+    for _ in 0..30 {
+        match within(pair::pair(&s.client, link, code)).await {
+            Ok(_) => return,
+            Err(e) => last = Some(e),
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("pairing never worked: {:#}", last.unwrap());
 }
 
 /// P-T1: the right code pairs; the device is listed; `ls`/`get` then work
@@ -288,5 +305,75 @@ async fn a_new_invite_replaces_the_old_one() {
         .unwrap_err();
     assert!(format!("{err:#}").contains("no active invite"), "{err:#}");
     within(pair::pair(&s.client, &link, &code)).await.unwrap();
+    shutdown(s).await;
+}
+
+/// Starts a raw handshake for `invite_id` from `ep` and returns the streams
+/// right after the agent's `Reply` (one attempt used, lock held).
+async fn start_raw_handshake(
+    ep: &Endpoint,
+    s: &Setup,
+    invite_id: [u8; 16],
+) -> (
+    iroh::endpoint::Connection,
+    iroh::endpoint::SendStream,
+    iroh::endpoint::RecvStream,
+) {
+    let conn = within(ep.connect(s.addr.clone(), PAIR_ALPN)).await.unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    let agent_id = s.agent.endpoint().id();
+    let (_st, msg_a) = Spake2::<Ed25519Group>::start_a(
+        &Password::new(b"acid-acid-acid-acid"),
+        &Identity::new(ep.id().as_bytes()),
+        &Identity::new(agent_id.as_bytes()),
+    );
+    let start = PairStart {
+        version: PAIR_VERSION,
+        invite_id,
+        msg_a,
+    };
+    write_frame(&mut send, &start).await.unwrap();
+    let reply: AgentMsg = within(read_frame_max(&mut recv, MAX_PAIR_FRAME))
+        .await
+        .unwrap();
+    assert!(matches!(reply, AgentMsg::Reply { .. }), "{reply:?}");
+    (conn, send, recv)
+}
+
+/// W-1 (Warden): a wrong confirmation for an OLD invite, arriving after the
+/// owner made a NEW invite, must not burn the new one.
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_failed_attempt_does_not_burn_a_newer_invite() {
+    let s = setup_with(ServeOptions::default(), false).await;
+    let (a, _code_a) = Invite::new(DEFAULT_TTL, pair::now_secs(), None).unwrap();
+    let a_id = a.invite_id;
+    s.agent.offer_invite(a);
+
+    let attacker = new_client().await;
+    let (conn, mut send, mut recv) = start_raw_handshake(&attacker, &s, a_id).await;
+
+    // The owner runs `pigeon-agent pair` again; `share` picks up invite B.
+    let (b, code_b) = Invite::new(DEFAULT_TTL, pair::now_secs(), None).unwrap();
+    let link_b = b.link(s.addr.clone());
+    s.agent.offer_invite(b);
+    assert!(s.agent.invite_active());
+
+    // The attacker now sends a bogus confirmation for A.
+    write_frame(&mut send, &PairConfirm { mac: [0; 32] })
+        .await
+        .unwrap();
+    let res: AgentMsg = within(read_frame_max(&mut recv, MAX_PAIR_FRAME))
+        .await
+        .unwrap();
+    assert!(matches!(res, AgentMsg::Failed { .. }), "{res:?}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        s.agent.invite_active(),
+        "a failed attempt on the old invite burned the new invite"
+    );
+    // And the owner's pairing with B works once the attacker is gone.
+    conn.close(0u32.into(), b"bye");
+    pair_eventually(&s, &link_b, &code_b).await;
+    attacker.close().await;
     shutdown(s).await;
 }
