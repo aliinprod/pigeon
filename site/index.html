@@ -90,6 +90,72 @@
       </ol>
     </section>
 
+    <section class="block" id="app" aria-labelledby="app-title">
+      <h2 id="app-title" class="kicker">A first look at the app</h2>
+      <div class="app-intro">
+        <p class="note"><span class="dot" aria-hidden="true"></span>Design preview — the app is coming soon</p>
+        <p class="app-lede">Any of your computers can share folders or get files: Mac and Windows today, Linux coming soon. These screens show a Mac sharing and a Windows PC getting.</p>
+      </div>
+      <ol class="tour">
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">01</span>
+            <h3>Share a folder</h3>
+            <p>Pick the folders you want to reach from home. They are shared read&#8209;only, and the menu bar shows who got what.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="assets/app/share-dark.webp" media="(prefers-color-scheme: dark)" width="630" height="480">
+              <img src="assets/app/share-light.webp" width="630" height="480" loading="lazy" decoding="async" alt="Pigeon in the Mac menu bar: online, sharing the folders ForHome and Projects/Q4 read-only, with recent files fetched by Home PC.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">02</span>
+            <h3>Pair once with a 4&#8209;word code</h3>
+            <p>Send yourself the invite link, then type the 4&#8209;word code on the other computer. Each device gets its own key, and you can revoke it any time.</p>
+          </div>
+          <figure class="shot shot--pair">
+            <picture class="shot-main">
+              <source srcset="assets/app/pair-mac-dark.webp" media="(prefers-color-scheme: dark)" width="800" height="600">
+              <img src="assets/app/pair-mac-light.webp" width="800" height="600" loading="lazy" decoding="async" alt="Pair a device, on the Mac: an invite link to copy, and the 4-word code otter plaza crumb vivid. Single use, 3 tries.">
+            </picture>
+            <picture class="shot-inset">
+              <source srcset="assets/app/pair-win-dark.webp" media="(prefers-color-scheme: dark)" width="520" height="380">
+              <img src="assets/app/pair-win-light.webp" width="520" height="380" loading="lazy" decoding="async" alt="On the Windows PC: typing the 4-word code, with suggestions for the third word.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">03</span>
+            <h3>Browse and press Get</h3>
+            <p>Your shared folders show up on the other computer. Find a file and press Get. Nothing is copied until you ask.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="assets/app/browse-dark.webp" media="(prefers-color-scheme: dark)" width="1040" height="636">
+              <img src="assets/app/browse-light.webp" width="1040" height="636" loading="lazy" decoding="async" alt="Pigeon on Windows browsing Work Mac, ForHome, Reports: four files with sizes and a Get button.">
+            </picture>
+          </figure>
+        </li>
+        <li class="tour-step">
+          <div>
+            <span class="num" aria-hidden="true">04</span>
+            <h3>Direct, and verified</h3>
+            <p>The file comes straight from your computer when the network allows, through the relay when it doesn't. Every file is checked with SHA&#8209;256, and nothing gets overwritten.</p>
+          </div>
+          <figure class="shot">
+            <picture>
+              <source srcset="assets/app/transfers-dark.webp" media="(prefers-color-scheme: dark)" width="1040" height="636">
+              <img src="assets/app/transfers-light.webp" width="1040" height="636" loading="lazy" decoding="async" alt="Transfers on Windows: two downloads in progress, one Direct and one through the relay, and two finished files marked SHA-256 verified.">
+            </picture>
+          </figure>
+        </li>
+      </ol>
+    </section>
+
     <section class="block" aria-labelledby="principles-title">
       <h2 id="principles-title" class="kicker">Principles</h2>
       <ul class="principles">
@@ -129,7 +195,7 @@
         </details>
         <details>
           <summary><span class="q">Can someone steal my files?</span><span class="ind" aria-hidden="true"></span></summary>
-          <p>Files travel encrypted (TLS 1.3), so anyone in between, the relay included, sees only scrambled data. Only devices you paired, each with its own key, can ask for files, and our tests try wrong keys and oversized messages from strangers on every change. Keep your paired devices locked; you'll be able to remove a lost device from your work computer.</p>
+          <p>Files travel encrypted (TLS 1.3), so anyone in between, the relay included, sees only scrambled data. Only devices you paired (once, with a 4-word code) can ask for files. Each one gets its own key, and our tests try wrong keys and oversized messages from strangers on every change. Keep your paired devices locked; if one is lost, revoke it on your work computer and it is cut off within a second.</p>
         </details>
         <details>
           <summary><span class="q">How do you know it's secure?</span><span class="ind" aria-hidden="true"></span></summary>
