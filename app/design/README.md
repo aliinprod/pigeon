@@ -1,146 +1,176 @@
-# Pigeon app design (v0)
+# Pigeon app design (v1: one app, Share + Get)
 
-A clickable design prototype for the **macOS agent** and the **Windows client**,
-made before any Tauri code. It is a single static file: `index.html` (inline
-CSS/JS, Google Fonts only, logo from `../../brand/logo.webp`). Nothing in it
-talks to a network or to `pigeon-core`; all data is fake.
+A clickable design prototype, made before any Tauri code. **One app per OS, two roles
+on every OS:** *Share* (my folders, who may get from me, invites, activity) and *Get*
+(computers I can get from, browse, search, transfers). Mac to PC, PC to Mac, Linux to
+anything.
+
+It is a single static file: `index.html` (inline CSS/JS, Google Fonts only, logo from
+`../../brand/logo.webp`). Nothing talks to a network or to `pigeon-core`; all data is fake.
 
 **Open it:** double-click `app/design/index.html`, or serve the repo root
-(`python -m http.server` from the repo root, then `/app/design/`).
+(`python -m http.server`, then `/app/design/`).
 
-- Top switcher: **macOS (agent)** / **Windows (client)**, and **Auto / Light / Dark**
-  (Auto follows the OS).
-- Chips under it jump to every screen and state. Chips with a dot are problem states.
-  On a phone the chips become one dropdown.
-- Deep links: `index.html#p=win&s=w-transfers&t=dark`. Add `&bare=1` to hide the
-  prototype chrome (used for screenshots).
+- Top switcher: **macOS / Windows / Linux (soon)** and **Auto / Light / Dark** (Auto follows the OS).
+- Chips jump to every screen and state, grouped First run / Both / Share / Get / Problems
+  (dot = problem state). On a phone the chips become one dropdown.
+- Deep links: `index.html#p=mac&s=g-browse&t=dark`. Add `&bare=1` to hide the prototype
+  chrome (used for screenshots).
+
+## The cast (same story from three points of view)
+
+| Computer | OS | Shares | Can get from |
+|---|---|---|---|
+| Work Mac | macOS | ForHome, Projects/Q4 | Home PC |
+| Home PC | Windows | Scans, Photos 2026 | Work Mac |
+| Studio | Linux (coming soon) | Renders | Work Mac |
+
+Plus one device per platform that only goes one way (Old ThinkPad gets from the Mac;
+Studio gets from Home PC; Home PC gets from Studio), so the Devices list always shows a
+missing direction.
+
+## Platform frames
+
+- **macOS:** menu bar icon + popover, and one window with a sidebar. Traffic lights, SF for chrome.
+- **Windows 11:** tray icon + flyout above the taskbar, and one window (Mica title bar,
+  caption buttons, left nav with the active bar). Toasts bottom-right.
+- **Linux (coming soon):** GNOME-style window (header bar, round close button), GNOME top
+  bar, notification top-centre. No tray: stock GNOME has none. Marked "Coming soon".
+
+The window is the same everywhere: a sidebar with **Get from** (computers, Transfers),
+**Share** (My shared folders, Activity), **Devices**, **Pair a device**, **Settings**.
+Under 760 px the sidebar becomes tabs.
 
 ## Screens
 
-### macOS (agent)
-| Id | Screen | What it shows |
+| Id | Screen | Notes |
 |---|---|---|
-| `m-welcome` | Welcome: pick folders | First run. Add folders to share, read-only. Warns against sharing the whole home folder. |
-| `m-invite` | Pair a device | Sheet over Devices: (1) invite link + Copy, "safe to email"; (2) the 4-word code in big mono boxes, "don't send it". Expiry countdown, single use, 3 tries, "Waiting for a device…". QR button present but disabled ("comes later"). |
-| `m-invite-wrong` | Wrong code tried | Same sheet with a banner: "Someone typed a wrong code. 2 tries left. If that wasn't you, cancel this invite." |
-| `m-paired` | Paired + notification | Success sheet with the new device's fingerprint, and a macOS notification "New device paired: Home PC · 4HPN Q2ZA. Not you? Revoke." |
-| `m-popover` | Menu bar popover | Daily use. Status (Online, relay connected), shared folders, recent activity (incl. a live fetch), Pair a device, Open Pigeon, Pause sharing, Quit. A Signal dot on the menu bar icon = a device is fetching now. |
-| `m-folders` | Folders tab | Shared folders with path, file count, size, Read-only tag, Stop sharing. Note on symlinks and hidden files. |
-| `m-devices` | Devices tab | Paired devices: name, fingerprint, paired date, last seen, route, Revoke. |
-| `m-revoke` | Revoke confirm | macOS alert: "It's disconnected now… A transfer in progress stops." |
-| `m-activity` | Activity tab | Fetches (with route), pairing events, wrong codes, refused unknown devices. "Kept for 30 days on this Mac. Never sent anywhere." |
-| `m-general` | General tab | Mac name, Mac fingerprint, open at login, sharing on/off, keep awake during transfers, new-pairing alerts (locked on), relay, Reset. |
-| `m-popover-offline` | No connection | Popover says the relay can't be reached, retry countdown, and what devices will see. |
-| `m-invite-burned` | Invite used up | 3 wrong codes: "Nothing was shared. If you didn't type them, someone else has your link." |
-| `m-invite-expired` | Invite expired | 12 h passed. Normal event, not an error. |
+| `welcome` | Welcome | "What do you want to do on this Mac/PC?": Share folders / Get files. Both allowed, either later. |
+| `pair-choose` | Pair: which way? | Two cards with a files-flow arrow: *Let a device get files from this Mac* (Share) or *Get files from another device* (Get). "Each pairing works one way… pair twice, once from each side." |
+| `tray` | Menu bar / tray flyout | Status; **Sharing from this Mac** (folders, who can get); **Get from** (computers + Browse); Recent with ↑/↓ arrows; Get files, Pair a device; Pause sharing, Open, Quit. Not on Linux. |
+| `devices` | Devices (both ways) | One card per computer, two rows: "↑ Home PC can get files from this Mac [Revoke]" and "↓ This Mac can get files from Home PC [Browse] [Forget]". A missing direction is a dashed row that says how to add it. |
+| `settings` | Settings | This computer's name + fingerprint; Share options (sharing on/off, keep awake during transfers, new-pairing alerts locked on); Get options (download folder, never overwrite); relay; appearance; Reset (removes every pairing, both directions). |
+| `s-folders` | My shared folders | Read-only folders, and "Who can get these" with Revoke. |
+| `s-invite` | Invite | Made on the sharing computer. Header "Let a device get files from this Mac", flow arrow, link (+ Copy, "safe to email"), 4-word code ("don't send it"), expiry, single use, 3 tries, QR later. |
+| `s-paired` | Paired (share side) | "Home PC can now get files from this Mac", fingerprint, OS notification with direction, and the follow-up "Want to get files from Home PC too? Start on Home PC…". |
+| `s-activity` | Activity | What others got from this computer, pairing events, wrong codes, refused devices. |
+| `revoke` | Revoke | "Stop Home PC getting files from this Mac? … This Mac can still get files from Home PC." |
+| `g-link` | Get: paste link | Shows which computer and the direction before asking for the code. |
+| `g-code` | Get: type code | Interactive autocompleting word boxes, tries left. |
+| `g-paired` | Get: paired | Both fingerprints, direction, and the follow-up "Should Home PC get files from this Mac too? That's a second pairing, and it starts here." → `s-invite`. |
+| `g-browse` | Browse | **On macOS this is the reverse flow: the Mac browsing Home PC's Scans.** Root chips, breadcrumbs, search, online badge, Get. |
+| `g-search` | Search | File names across everything that computer shares with you. |
+| `g-transfers` | Transfers | Progress, speed, time left, Direct / Relay, Pause, SHA-256 verified, Open / Show in folder, `name (1).ext` spelled out. Animates. |
+| `g-relay` | Relay explained | Tip: why, a 3-box path, "Slower, not less safe." |
 
-### Windows (client)
-| Id | Screen | What it shows |
-|---|---|---|
-| `w-link` | Pair: paste link | Step 1 of 2. Paste link; it is checked locally and shows "Invite from Work Mac · expires in 9 h 12 m". |
-| `w-code` | Pair: type code | Step 2 of 2. Four word boxes with autocompletion (**interactive**, see below). Shows Mac name, expiry and tries. |
-| `w-paired` | Paired: fingerprints | Both fingerprints side by side (Work Mac, This PC) and "check these match what the Mac shows". |
-| `w-browse` | Browse | Nav (device + status, shared folders, Transfers with count, Settings), breadcrumbs, name search, Online badge, file list (name, size, modified), Get on hover/selection, status bar "Read-only. Files stay on the Mac · Saving to Downloads\Pigeon". |
-| `w-search` | Search | File-name matches across all shared folders, with the folder each lives in. |
-| `w-transfers` | Transfers | In progress: progress bar, %, bytes, speed, time left, Direct / Relay badge, Pause. Finished: "SHA-256 verified", Open, Show in folder, and "Saved as a new copy: report-q4.pdf already existed". **Animates.** |
-| `w-relay` | Relay explained | Teaching tip from the Relay badge: why, a 3-box path diagram, "Slower, not less safe." |
-| `w-settings` | Settings | Download folder + the no-overwrite rule, paired Macs with Forget, This PC fingerprint, appearance, version. |
-| `w-code-wrong` | Wrong code | "That code didn't match. 2 tries left." Boxes keep their contents. |
-| `w-burned` / `w-expired` / `w-used` | Invite problems | One layout: what happened, what to do. "Already used" tells the owner to check Devices on the Mac and revoke. |
-| `w-offline` | Mac offline | Banner with last-seen time; the last known list stays, greyed, Get disabled. |
-| `w-dropped` | Dropped, resuming | "Connection lost at 61%. Reconnecting… resumes from 113 MB" and "Paused until Work Mac is reachable. Resumes from 412 MB; nothing is downloaded twice." |
-| `w-changed` | File changed | "Changed on the Mac while downloading. The partial copy was deleted…" plus a checksum-mismatch row. |
-| `w-revoked` | Revoked | "Work Mac doesn't accept this PC any more." Downloads stay. Pair again / Forget. |
+**Problem states:** `tray-offline` (no internet: both roles affected), `s-invite-wrong`,
+`s-burned`, `s-expired`, `g-code-wrong`, `g-burned`, `g-expired`, `g-used`, `g-offline`
+(other computer asleep: last known list, greyed), `g-dropped`, `g-changed` (+ checksum
+mismatch), `g-revoked` ("Home PC no longer lets this Mac get files… the other direction
+is separate").
 
 ### What is interactive
-- Every chip, nav item, tab, breadcrumb and most buttons navigate.
-- **Code input:** type 2+ letters for suggestions; `Tab`/`Enter` accepts; space or `-`
-  jumps to the next box; pasting `otter plaza crumb vivid` (any separators) fills all four;
-  `Backspace` in an empty box goes back. Pair with `otter-plaza-crumb-vivid` succeeds;
-  any other code costs a try; the third wrong code lands on "Invite used up".
-  The demo word list is a ~280-word subset; the app will embed the EFF list.
-- **Browse:** open folders, breadcrumbs, search as you type, Get adds a transfer
-  (small files finish at once, and a second Get of the same name shows the `(1)` copy).
-- **Transfers:** progress moves; finished items move to Finished.
-- macOS: popover buttons, Devices → Revoke, the invite sheet, toggles in General.
+- All chips, sidebar items, tabs, cards, breadcrumbs and most buttons navigate.
+- **Code input:** 2+ letters show suggestions; `Tab`/`Enter` accepts; space or `-` moves on;
+  pasting the full code (any separators) fills all four; `Backspace` in an empty box goes back.
+  `otter-plaza-crumb-vivid` pairs; anything else costs a try; the third wrong code ends on
+  "Invite used up". Demo word list is a ~280-word subset.
+- **Browse / Get:** open folders and roots, search as you type, Get adds a transfer
+  (small files finish at once; getting the same name twice shows the `(1)` copy).
+- Transfers animate; toggles toggle.
 
 ## Flows
 
-**First run, Mac (agent).** Install, open → *Welcome: choose what to share* (add
-`ForHome`, read-only) → Continue → *Pair a device* sheet: copy the link and email it
-to yourself; leave the code on screen or photograph it → app lives in the menu bar.
+**First run (any OS).** Welcome → pick *Share folders* (→ My shared folders) and/or
+*Get files* (→ paste link). Nothing is shared until folders are picked.
 
-**First run, Windows (client).** Open → *Pair with your Mac* → paste the link
-(we show which Mac it is from and when it expires) → *Type the code* (4 words,
-autocompleted) → *Paired*: compare fingerprints → *Browse*.
-On the Mac at the same moment: notification "New device paired: Home PC · 4HPN Q2ZA".
+**Pair so Home PC can get from Work Mac** (the original direction).
+On the Mac: Pair a device → *Let a device get files from this Mac* → copy link, keep code on
+screen. On the PC: Pair a device → *Get files from another device* → paste link (shows
+"Invite from Work Mac", Work Mac → Home PC) → type code → both fingerprints → Browse.
+Mac shows a notification "Home PC can get files from this Mac".
 
-**Daily use.** Mac: nothing to do; the menu bar icon shows a Signal dot while a device
-fetches; the popover shows who got what. Windows: open Pigeon → Browse or search →
-Get → Transfers shows progress, route, and "SHA-256 verified" → Open / Show in folder.
+**Reverse: Work Mac gets a file from Home PC.** Same steps with roles swapped: the invite
+is made on **Home PC** (it shares), pasted on **the Mac**. Then on the Mac:
+Get from → Home PC → Scans → `scan-041.pdf` → Get → Transfers (saved to
+`~/Downloads/Pigeon`, SHA-256 verified). See `mac-g-browse-*.png` and `mac-g-transfers-*.png`.
 
-**When things go wrong.** Mac asleep/offline → greyed list + last seen, transfers wait
-and resume. Firewall → Relay badge, explained in one tip. File edited mid-download →
-partial copy deleted, Get again. Lost home PC → Revoke on the Mac → the PC sees
-*Revoked*.
+**Both ways.** After pairing one way, both success screens offer the other direction:
+on the getting side, "Let Home PC get from this Mac" opens an invite *here*; on the
+sharing side, the copy says to start on the other computer. Devices shows each direction
+as its own row with its own Revoke / Forget.
+
+**Daily use.** Tray/menu bar: what's moving out (Share), computers you can get from (Get),
+recent both ways. Window for browsing, transfers, devices.
+
+**When things go wrong.** Other computer asleep → greyed list + last seen, transfers wait
+and resume. Firewall → Relay badge + tip. File edited mid-download → partial deleted,
+Get again. Lost computer → revoke that direction on the sharing side; the other side sees
+"no longer lets this Mac get files"; the reverse direction is untouched.
 
 ## Design decisions
 
-- **Brand:** black and white throughout. Primary buttons are Ink (Paper in dark).
-  **Signal `#FF5A1F` is reserved for "needs your attention"**: wrong codes, burned
-  invites, offline, failed transfers, destructive actions, plus the tiny "fetching now"
-  dot on the menu bar icon. Progress bars are Ink, not Signal, so a busy screen stays calm.
-- **Type:** Space Grotesk for titles, Inter for UI text, JetBrains Mono for anything a
-  person compares or copies (codes, fingerprints, paths, sizes, speeds).
-  Window chrome uses the system font (SF / Segoe UI) so frames feel native.
-- **Contrast:** Mist `#8A8F98` fails AA as body text on white, so secondary text uses a
-  darker Mist (`#5C6168`) in light and a lifted one (`#A7ABB2`) in dark. Signal text on
-  white uses `#C2410C`.
-- **Pairing copy follows PAIRING.md:** two secrets, two channels. The link says
-  "safe to email; the link alone can't pair". The code says "don't send it; read it from
-  here, or take a photo with your phone". Tries left and expiry are always visible on
-  both sides. Every new pairing raises a Mac notification that cannot be turned off.
-- **Fingerprints** are the first 8 base32 chars, shown as two groups of four
-  (`4HPN Q2ZA`), on both devices, in the same words ("This PC").
-- **Honest states:** we say what happened, what Pigeon is doing, and what you can do,
-  in that order. No spinner without a reason; offline shows last-seen time.
-- **Relay** is never called an error. Badge: "Relay · slower" with a tip: "Slower, not
-  less safe."
-- **Never overwrite** is stated where it matters: the finished transfer spells out the
-  new name and why; Settings states the rule once.
-- **Mac = menu bar app**, plus one settings window with four tabs (Folders, Devices,
-  Activity, General). Pairing is a sheet on Devices.
-- **Windows = one window** with a left nav (device + status, folders, Transfers,
-  Settings). Under 760 px the nav becomes tabs; tables drop the Modified column.
+- **Direction is always spelled out in words,** "X can get files from Y", never
+  "connected" or "paired with". Arrows (↑ out of this computer, ↓ into it) back up the
+  words; the flow diagram's arrow always follows the files.
+- **The invite is always made on the computer that shares.** That matches PAIRING.md
+  (the agent role issues the invite and holds the allow-list). No new protocol is implied.
+- **One device card, two rows.** Revoke (my share) and Forget (my access) are separate
+  actions on separate rows, so removing one direction never silently removes the other.
+- **Brand:** black and white; primary buttons Ink (Paper in dark). **Signal `#FF5A1F` only for
+  "needs your attention"** (wrong codes, burned invite, offline, failures, destructive
+  actions) and the small "transfer running" dot on the tray/menu bar icon. Progress is Ink.
+- **Type:** Space Grotesk titles, Inter text, JetBrains Mono for codes, fingerprints, paths,
+  sizes. OS chrome uses the system font (SF, Segoe UI, Cantarell).
+- **Contrast:** secondary text uses darker Mist `#5C6168` (light) / `#A7ABB2` (dark); Signal
+  text on white `#C2410C`.
+- **Honest copy:** what happened, what Pigeon is doing, what you can do. Relay is "slower,
+  not less safe". Never overwrite is spelled out where it happens.
+- **Fingerprints:** first 8 base32 chars, `4HPN Q2ZA`, shown the same way on both sides.
 
-## Open questions for the owner
+## Open questions
 
-1. **Word list:** PAIRING.md says "EFF short wordlist (1296 words)". EFF has two short
-   lists; *short list 2* has unique 3-letter prefixes, so 3 letters always identify a word.
-   That makes autocompletion and typo-proofing much better. OK to ask Warden/Anvil for
-   list 2? (Same entropy.)
-2. **Keep the Mac awake during transfers?** Designed as an opt-in toggle. Some employers
-   manage power settings; default off is the safe choice.
-3. **Pause sharing** in the popover: wanted for v1, or later?
-4. **Activity log retention:** 30 days on the Mac, never uploaded. OK?
-5. **Download folder default:** `Downloads\Pigeon` (proposed) or plain `Downloads`?
-6. **Device name on pairing:** the Mac calls the PC "Home PC" from `--name`. Should the
-   client send its OS hostname by default, or ask on the code screen?
-7. **Search scope:** names only across all shared folders (proposed). Content search is
-   out of scope.
-8. **Offline list:** we show the last known listing, greyed. That means the client caches
-   file names locally. OK, or show nothing when offline?
-9. **Several Macs:** the nav has room for more than one Mac; v1 designs for one.
+New with the two-role design (for the owner, Warden and Anvil):
+
+1. **"Also let this device share with me" shortcut.** Today the design reuses the normal
+   flow: the second direction is a second invite made on the other computer (link + code).
+   Could an already-paired, authenticated connection carry a reverse invite so the user only
+   confirms on both screens (no link, maybe no code)? That's a protocol change: Warden to
+   review the trust model, Anvil to say if it fits `pigeon/pair/1`. Not designed as fact.
+2. **One key per computer for both roles?** The design assumes each computer has one
+   identity/fingerprint used for sharing and getting. Confirm with Anvil.
+3. **Run in background for Get-only computers?** A computer that only gets doesn't need to
+   be online for others. Should the tray icon still run at login by default?
+4. **Linux tray:** stock GNOME has no tray. Window only, or ship an AppIndicator for
+   desktops that support it?
+5. **Device names:** both sides name each other (e.g. "Home PC"). Send the OS hostname by
+   default, or ask during pairing?
+
+Still open from v0:
+
+6. **Word list:** use EFF *short list 2* (unique 3-letter prefixes) for better
+   autocompletion, same entropy?
+7. **Keep awake during transfers:** opt-in toggle, default off. OK?
+8. **Pause sharing** in v1, or later?
+9. **Activity log:** 30 days, on the sharing computer only, never uploaded. OK?
+10. **Download folder default:** `Downloads/Pigeon` or plain `Downloads`?
+11. **Search scope:** file names only, across everything that computer shares with you.
+12. **Offline list:** show the last known listing (greyed)? Needs a local name cache.
+13. **Several computers:** the sidebar has room for many; the demo shows one per direction.
 
 ## Screenshots
 
-`screenshots/` (rendered with headless Edge at 1180×676 / 1100×652, `&bare=1`):
+`screenshots/` (headless Edge, 1240×762, `&bare=1`):
 
-- Main screens, light and dark: `mac-{welcome,invite,paired,popover,folders,devices,revoke,activity,general}-{light,dark}.png`,
-  `win-{link,code,paired,browse,search,transfers,relay,settings}-{light,dark}.png`
-- Problem states, light: `mac-{invite-wrong,popover-offline,invite-burned,invite-expired}-light.png`,
-  `win-{code-wrong,burned,expired,used,offline,dropped,changed,revoked}-light.png`
-- Phone width (390 px, two screens per image): `phone-mac-light-dark.png`, `phone-win-light-dark.png`
+- **Main screens, light and dark, macOS and Windows** (56):
+  `{mac,win}-{welcome,pair-choose,tray,devices,s-folders,s-invite,s-paired,s-activity,g-link,g-code,g-paired,g-browse,g-transfers,settings}-{light,dark}.png`
+- **Linux, light and dark** (8): `linux-{welcome,devices,g-browse,s-invite}-{light,dark}.png`
+- **Problem states, light** (14): `mac-{tray-offline,s-invite-wrong,s-burned,g-offline,g-revoked,revoke}-light.png`,
+  `win-{g-code-wrong,g-used,g-expired,g-dropped,g-changed,g-relay,g-search,s-expired}-light.png`
+- **Phone width, 390 px, two screens each** (3): `phone-{mac,win,linux}-light-dark.png`
 
-Not verified: real macOS / Windows rendering (all frames are drawn in HTML), Safari,
+The v0 screenshots (`mac-popover-*`, `win-browse-*`, …) were replaced; anything that
+linked them needs the new names.
+
+Not verified: real macOS / Windows / GNOME rendering (frames are drawn in HTML), Safari,
 screen readers beyond basic labels.
