@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "updated_at": "2026-11-23T19:30:00Z",
+  "updated_by": "atlas",
+  "agents": [
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "role": "Coordinator",
+      "about": "Splits work, delegates, reports to the owner, drafts the daily X post. Writes no product code.",
+      "status": "working",
+      "task": "Coordinating; drafting Day 4 post",
+      "last_result": {
+        "text": "Day 3 devlog and post draft",
+        "url": "https://github.com/aliinprod/pigeon/blob/main/posts/day-3.md"
+      },
+      "updated_at": "2026-11-23T18:25:00Z"
+    },
+    {
+      "id": "anvil",
+      "name": "Anvil",
+      "role": "Rust core + CLI",
+      "about": "Core protocol, the Mac agent and the CLI in Rust. Done means cargo test green on macOS and Windows CI.",
+      "status": "done",
+      "task": "Linux support + binaries",
+      "last_result": {
+        "text": "PR #9 merged: Linux support + binaries",
+        "url": "https://github.com/aliinprod/pigeon/pull/9"
+      },
+      "updated_at": "2026-11-23T18:20:10Z"
+    },
+    {
+      "id": "canvas",
+      "name": "Canvas",
+      "role": "Desktop app UI",
+      "about": "Desktop app UI (Tauri 2). Done means the app builds, with screenshots of each screen.",
+      "status": "waiting",
+      "task": "One app, two roles design (PR #7): waiting for merge and PM decisions",
+      "last_result": {
+        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux; PM decisions approved by owner",
+        "url": "https://github.com/aliinprod/pigeon/pull/7"
+      },
+      "updated_at": "2026-11-23T19:30:00Z"
+    },
+    {
+      "id": "plume",
+      "name": "Plume",
+      "role": "Website",
+      "about": "The website in site/: static HTML and CSS, no trackers. Done means screenshots at 390 and 1440 px, no console errors, links checked.",
+      "status": "working",
+      "task": "Redesigning the office + login gate",
+      "last_result": {
+        "text": "PR #8 merged: app screenshots on the site, live on flypigeon.pages.dev",
+        "url": "https://github.com/aliinprod/pigeon/pull/8"
+      },
+      "updated_at": "2026-11-23T19:30:00Z"
+    },
+    {
+      "id": "warden",
+      "name": "Warden",
+      "role": "Security",
+      "about": "Threat model, security requirements, design reviews before code, supply-chain checks and fuzzing in CI. Can block a PR on high or critical findings.",
+      "status": "idle",
+      "task": null,
+      "last_result": {
+        "text": "PR #6 security review: approve with follow-ups",
+        "url": "https://github.com/aliinprod/pigeon/pull/6#issuecomment-7097204911"
+      },
+      "updated_at": "2026-11-23T09:52:32Z"
+    },
+    {
+      "id": "proof",
+      "name": "Proof",
+      "role": "Verifier",
+      "about": "Turns risks into automated tests, reviews every PR and can reject it.",
+      "status": "idle",
+      "task": null,
+      "last_result": {
+        "text": "PR #6 verdict: pass with nits",
+        "url": "https://github.com/aliinprod/pigeon/pull/6#issuecomment-7097281137"
+      },
+      "updated_at": "2026-11-23T09:56:08Z"
+    },
+    {
+      "id": "frame",
+      "name": "Frame",
+      "role": "Promo video",
+      "about": "Promo videos and short clips from real app UI and real numbers.",
+      "status": "done",
+      "task": "Promo video v1",
+      "last_result": {
+        "text": "PR #10 merged: 33.5 s promo, 16:9 and 1:1",
+        "url": "https://github.com/aliinprod/pigeon/pull/10"
+      },
+      "updated_at": "2026-11-23T11:42:42Z"
+    }
+  ],
+  "owner_queue": [
+    {
+      "text": "Merge PR #7 (app design)",
+      "from": "canvas",
+      "url": "https://github.com/aliinprod/pigeon/pull/7"
+    },
+    {
+      "text": "Merge PR #11 (office) and set office login in Cloudflare",
+      "from": "plume",
+      "url": "https://github.com/aliinprod/pigeon/pull/11"
+    },
+    {
+      "text": "Test pairing build on the office Mac",
+      "from": "atlas",
+      "url": null
+    }
+  ]
+}
