@@ -449,3 +449,46 @@ async fn stale_failed_attempt_does_not_burn_a_newer_invite() {
     attacker.close().await;
     shutdown(s).await;
 }
+
+/// Proof: an "agent" that does not know the code (here: the right key, but a
+/// SPAKE2 run with another password and a junk confirmation MAC) must not be
+/// accepted by the client. Without the client's MAC check this would pair.
+#[tokio::test(flavor = "multi_thread")]
+async fn client_refuses_an_agent_that_cannot_prove_the_code() {
+    use pigeon_core::pair::{AgentMsg, MAX_PAIR_FRAME, PairConfirm, PairStart};
+    use pigeon_core::proto::{read_frame_max, write_frame};
+    use spake2::{Ed25519Group, Identity, Password, Spake2};
+
+    let fake = local_endpoint(vec![PAIR_ALPN.to_vec()]).await;
+    let addr = addr_of(&fake);
+    let (invite, code) = Invite::new(DEFAULT_TTL, pair::now_secs(), None).unwrap();
+    let link = invite.link(addr);
+    let server = tokio::spawn(async move {
+        let conn = fake.accept().await.unwrap().await.unwrap();
+        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+        let _start: PairStart = read_frame_max(&mut recv, MAX_PAIR_FRAME).await.unwrap();
+        let (_state, msg_b) = Spake2::<Ed25519Group>::start_b(
+            &Password::new(b"not-the-code"),
+            &Identity::new(b"a"),
+            &Identity::new(b"b"),
+        );
+        write_frame(&mut send, &AgentMsg::Reply { msg_b })
+            .await
+            .unwrap();
+        let _c: PairConfirm = read_frame_max(&mut recv, MAX_PAIR_FRAME).await.unwrap();
+        write_frame(&mut send, &AgentMsg::Ok { mac: [0u8; 32] })
+            .await
+            .unwrap();
+        send.finish().unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), conn.closed()).await;
+    });
+    let client = new_client().await;
+    let err = within(pair::pair(&client, &link, &code))
+        .await
+        .expect_err("client accepted an agent that does not know the code");
+    assert!(
+        format!("{err:#}").contains("could not prove"),
+        "unexpected error: {err:#}"
+    );
+    server.abort();
+}
