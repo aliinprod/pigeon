@@ -1,0 +1,1111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pigeon App Design</title>
+<meta name="description" content="Clickable design prototype for the Pigeon app: one app with Share and Get on macOS, Windows and Linux. Static HTML, no backend.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens (brand/BRAND.md) ---------- */
+:root {
+  --ink: #0B0B0B; --paper: #FFFFFF; --signal: #FF5A1F; --mist: #8A8F98;
+  --page: #EEEEEC;
+  --surface: #FFFFFF;
+  --surface-2: #F6F6F5;
+  --side: #F1F1F0;
+  --chrome: #ECECEC;
+  --text: #0B0B0B;
+  --text-2: #5C6168;          /* Mist darkened for AA on white */
+  --line: rgba(11,11,11,.11);
+  --line-strong: rgba(11,11,11,.22);
+  --hover: rgba(11,11,11,.05);
+  --select: rgba(11,11,11,.08);
+  --btn-bg: #0B0B0B; --btn-fg: #FFFFFF;
+  --signal-soft: rgba(255,90,31,.10);
+  --signal-text: #C2410C;     /* Signal darkened for text on white (AA) */
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 12px 40px rgba(0,0,0,.14);
+  --desk: linear-gradient(160deg, #D9D9D6 0%, #C9CACC 55%, #BDBFC2 100%);
+  --bar: rgba(255,255,255,.72);
+  --mica: linear-gradient(180deg, #EEF0F2, #F3F3F3);
+  --logo-filter: brightness(1.08) contrast(1.25);
+  --logo-blend: multiply;
+  --f-head: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  --f-mac: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+  --f-win: "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
+  --f-gtk: "Cantarell", "Inter", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #050505; --surface: #161616; --surface-2: #1C1C1C; --side: #1E1E1E; --chrome: #232323;
+    --text: #F4F4F2; --text-2: #A7ABB2; --line: rgba(255,255,255,.11); --line-strong: rgba(255,255,255,.24);
+    --hover: rgba(255,255,255,.06); --select: rgba(255,255,255,.10);
+    --btn-bg: #F4F4F2; --btn-fg: #0B0B0B; --signal-soft: rgba(255,90,31,.16); --signal-text: #FF7A45;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 16px 48px rgba(0,0,0,.6);
+    --desk: linear-gradient(160deg, #1B1C1E 0%, #121314 60%, #0B0B0C 100%);
+    --bar: rgba(30,30,30,.72); --mica: linear-gradient(180deg, #24262A, #202020);
+    --logo-filter: invert(1) contrast(1.25) brightness(.92); --logo-blend: screen; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #050505; --surface: #161616; --surface-2: #1C1C1C; --side: #1E1E1E; --chrome: #232323;
+  --text: #F4F4F2; --text-2: #A7ABB2; --line: rgba(255,255,255,.11); --line-strong: rgba(255,255,255,.24);
+  --hover: rgba(255,255,255,.06); --select: rgba(255,255,255,.10);
+  --btn-bg: #F4F4F2; --btn-fg: #0B0B0B; --signal-soft: rgba(255,90,31,.16); --signal-text: #FF7A45;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 16px 48px rgba(0,0,0,.6);
+  --desk: linear-gradient(160deg, #1B1C1E 0%, #121314 60%, #0B0B0C 100%);
+  --bar: rgba(30,30,30,.72); --mica: linear-gradient(180deg, #24262A, #202020);
+  --logo-filter: invert(1) contrast(1.25) brightness(.92); --logo-blend: screen; color-scheme: dark;
+}
+
+/* ---------- Page shell ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--text); font: 400 14px/1.5 var(--f-body); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 6px; }
+.logo { display: block; filter: var(--logo-filter); mix-blend-mode: var(--logo-blend); object-fit: cover; }
+.mono { font-family: var(--f-mono); }
+
+.top { position: sticky; top: 0; z-index: 50; background: var(--page); border-bottom: 1px solid var(--line); }
+.top-in { max-width: 1280px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 12px 16px; align-items: center; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; font: 700 16px/1 var(--f-head); letter-spacing: -.01em; margin-right: auto; }
+.brand .logo { width: 30px; height: 30px; }
+.brand small { font: 500 12px var(--f-body); color: var(--text-2); letter-spacing: 0; }
+.seg { display: inline-flex; background: var(--hover); border: 1px solid var(--line); border-radius: 9px; padding: 2px; }
+.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; cursor: pointer; font-weight: 500; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.soon { font: 600 10px var(--f-body); text-transform: uppercase; letter-spacing: .06em; border: 1px dashed var(--line-strong); border-radius: 99px; padding: 1px 6px; margin-left: 4px; color: var(--text-2); }
+.states { max-width: 1280px; margin: 0 auto; padding: 10px 16px 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.sgroup { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sgroup > span { font: 500 11px var(--f-body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); margin-right: 2px; }
+.chip { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; color: var(--text); }
+.chip:hover { background: var(--hover); }
+.chip[aria-current="true"] { background: var(--text); color: var(--page); border-color: var(--text); }
+.chip.warn::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--signal); margin-right: 6px; vertical-align: 1px; }
+.state-select { display: none; width: 100%; }
+.stage { max-width: 1280px; margin: 0 auto; padding: 16px 16px 40px; }
+.note { max-width: 880px; margin: 14px auto 0; color: var(--text-2); font-size: 13px; text-align: center; }
+.note b { color: var(--text); font-weight: 600; }
+body.bare .top, body.bare .states, body.bare .note { display: none; }
+body.bare .stage { padding: 0; max-width: none; }
+
+/* ---------- Shared UI ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); border-radius: 7px; padding: 6px 12px; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
+.btn.primary:hover { opacity: .88; }
+.btn.danger { color: var(--signal-text); }
+.btn.danger-fill { background: var(--signal); color: #fff; border-color: var(--signal); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--hover); }
+.btn.demo { border-style: dashed; color: var(--text-2); background: transparent; }
+.btn[disabled] { opacity: .4; cursor: not-allowed; }
+.btn.sm { padding: 3px 9px; font-size: 12px; }
+.btn.lg { padding: 9px 18px; font-size: 14px; }
+.ico { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ico.lg { width: 22px; height: 22px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line-strong); white-space: nowrap; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; display: inline-block; }
+.dot.off, .pill.off .dot { background: transparent; border: 1.5px solid currentColor; width: 8px; height: 8px; }
+.pill.off { color: var(--text-2); }
+.route { font: 500 11px var(--f-body); padding: 1px 7px; border-radius: 5px; border: 1px solid var(--line-strong); white-space: nowrap; display: inline-flex; gap: 4px; align-items: center; }
+.route.relay { border-style: dashed; cursor: pointer; background: transparent; color: var(--text); }
+.route.relay:hover { background: var(--hover); }
+.tag { font: 500 11px var(--f-body); color: var(--text-2); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; white-space: nowrap; }
+.muted { color: var(--text-2); }
+.small { font-size: 12px; }
+.h1 { font: 700 22px/1.2 var(--f-head); letter-spacing: -.015em; margin: 0; }
+.h2 { font: 700 16px/1.25 var(--f-head); letter-spacing: -.01em; margin: 0; }
+.h3 { font: 600 13px/1.3 var(--f-body); margin: 0; }
+.label { font: 600 11px var(--f-body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); }
+.row { display: flex; align-items: center; gap: 10px; }
+.grow { flex: 1; min-width: 0; }
+.trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.banner { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); font-size: 13px; }
+.banner.attn { border-color: rgba(255,90,31,.45); background: var(--signal-soft); }
+.banner.attn > .ico { color: var(--signal); }
+.banner p { margin: 0; }
+.banner b { font-weight: 600; }
+.field { width: 100%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); border-radius: 7px; padding: 7px 10px; font: inherit; font-size: 13px; }
+.kbd { font: 500 11px var(--f-mono); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+.fp { font: 500 13px var(--f-mono); letter-spacing: .06em; }
+.bar { height: 6px; border-radius: 99px; background: var(--select); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--text); border-radius: 99px; transition: width .4s linear; }
+.bar.paused > i { background: var(--mist); }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--text); animation: spin 1s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toggle { width: 34px; height: 20px; border-radius: 99px; background: var(--line-strong); position: relative; flex: none; border: 0; cursor: pointer; }
+.toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+.toggle[aria-checked="true"] { background: var(--text); }
+.toggle[aria-checked="true"]::after { left: 16px; background: var(--page); }
+.toggle[disabled] { opacity: .5; cursor: not-allowed; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.big-check { width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--text); display: grid; place-items: center; margin: 4px 0 10px; }
+.big-x { border-color: var(--signal); color: var(--signal); }
+.step-n { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--text); display: inline-grid; place-items: center; font: 600 11px var(--f-body); flex: none; }
+.code-words { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.code-words div { border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px 4px 8px; text-align: center; background: var(--surface-2); }
+.code-words b { display: block; font: 500 19px var(--f-mono); }
+.code-words small { font: 500 10px var(--f-mono); color: var(--text-2); }
+.linkbox { display: flex; gap: 8px; align-items: center; }
+.linkbox code { flex: 1; min-width: 0; font: 400 12.5px var(--f-mono); border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--surface-2); }
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; font: 500 11.5px var(--f-body); color: var(--text-2); padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.table td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.list .li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.list .li:first-child { border-top: 0; }
+
+/* Direction (who gets from whom) */
+.dir { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.dir .arrow { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line-strong); display: grid; place-items: center; flex: none; }
+.dir.no { color: var(--text-2); }
+.dir.no .arrow { border-style: dashed; }
+.dir b { font-weight: 600; }
+.flow { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.flow .n { border: 1px solid var(--line-strong); border-radius: 6px; padding: 3px 8px; background: var(--surface); white-space: nowrap; }
+.flow .ln { flex: 1; min-width: 28px; border-top: 1.5px solid var(--text); position: relative; }
+.flow .ln::after { content: ""; position: absolute; right: -1px; top: -5px; border: 4.5px solid transparent; border-left: 7px solid var(--text); }
+.flow .ln.dash { border-top-style: dashed; border-color: var(--line-strong); }
+.flow .ln.dash::after { border-left-color: var(--line-strong); }
+.choice { text-align: left; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 12px; padding: 16px; cursor: pointer; display: flex; flex-direction: column; gap: 10px; }
+.choice:hover { border-color: var(--text); }
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ---------- Desktops ---------- */
+.desk { position: relative; border-radius: 12px; overflow: hidden; background: var(--desk); min-height: 720px; border: 1px solid var(--line); display: flex; flex-direction: column; }
+.desk-area { position: relative; flex: 1; padding: 24px 20px; display: flex; justify-content: center; align-items: flex-start; }
+.desk.win .desk-area { padding-bottom: 72px; }
+/* macOS menu bar */
+.menubar { height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--chrome); font: 500 13px var(--f-mac); flex: none; }
+.menubar .left { display: flex; gap: 16px; align-items: center; padding-left: 6px; }
+.menubar .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.mb-item { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 5px; height: 22px; border: 0; background: transparent; }
+.mb-item .logo { width: 22px; height: 22px; }
+.mb-item.pigeon { cursor: pointer; position: relative; }
+.mb-item.pigeon.active { background: var(--select); }
+.busy::after { content: ""; position: absolute; right: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--signal); }
+.mb-item .ico { width: 15px; height: 15px; }
+/* Windows taskbar */
+.taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: var(--chrome); border-top: 1px solid var(--line); display: flex; align-items: center; padding: 0 10px; font: 400 12px var(--f-win); }
+.taskbar .apps { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; }
+.taskbar .apps span { width: 36px; height: 36px; border-radius: 5px; display: grid; place-items: center; }
+.taskbar .apps span i { width: 20px; height: 20px; border-radius: 4px; background: var(--line-strong); display: block; }
+.taskbar .apps span.on { background: var(--select); }
+.taskbar .apps span .logo { width: 24px; height: 24px; }
+.taskbar .tray { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.taskbar .tray .t { height: 36px; min-width: 30px; padding: 0 6px; display: grid; place-items: center; border-radius: 5px; border: 0; background: transparent; position: relative; }
+.taskbar .tray .t.active { background: var(--select); }
+.taskbar .tray .t .logo { width: 20px; height: 20px; }
+.taskbar .clock { text-align: right; line-height: 1.25; padding: 0 6px; }
+/* GNOME top bar */
+.gnome-bar { height: 30px; flex: none; background: #000; color: #fff; display: flex; align-items: center; padding: 0 12px; font: 600 13px var(--f-gtk); }
+.gnome-bar .act { padding: 2px 10px; border-radius: 99px; background: rgba(255,255,255,.14); }
+.gnome-bar .mid { position: absolute; left: 50%; transform: translateX(-50%); }
+.gnome-bar .sys { margin-left: auto; display: flex; gap: 8px; }
+
+/* ---------- Windows (app frames) ---------- */
+.window { width: 100%; max-width: 1040px; background: var(--surface); border-radius: 10px; border: 1px solid var(--line-strong); box-shadow: var(--shadow); overflow: hidden; position: relative; }
+.win .window { border-radius: 8px; }
+.linux .window { border-radius: 12px; }
+.tbar { height: 40px; display: flex; align-items: center; position: relative; background: var(--chrome); border-bottom: 1px solid var(--line); font: 600 13px var(--f-mac); justify-content: center; }
+.lights { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; background: #FF5F57; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.2); }
+.lights i:nth-child(2) { background: #FEBC2E; }
+.lights i:nth-child(3) { background: #28C840; }
+.win .tbar { height: 34px; justify-content: flex-start; gap: 8px; padding-left: 12px; background: var(--mica); border-bottom: 0; font: 400 12px var(--f-win); }
+.win .tbar .logo { width: 20px; height: 20px; }
+.caps { margin-left: auto; display: flex; height: 100%; }
+.caps span { width: 46px; display: grid; place-items: center; }
+.caps span:hover { background: var(--hover); }
+.caps span:last-child:hover { background: #C42B1C; color: #fff; }
+.caps .ico { width: 11px; height: 11px; stroke-width: 1.1; }
+.linux .tbar { height: 46px; font: 700 14px var(--f-gtk); background: var(--chrome); }
+.linux .tbar .gclose { position: absolute; right: 10px; width: 24px; height: 24px; border-radius: 50%; background: var(--select); display: grid; place-items: center; }
+.linux .tbar .gclose .ico { width: 12px; height: 12px; stroke-width: 2; }
+.linux .tbar .soon { position: absolute; left: 12px; }
+.app { display: flex; min-height: 600px; }
+.win .app { background: var(--mica); }
+.side { width: 228px; flex: none; padding: 10px 8px 12px; display: flex; flex-direction: column; gap: 1px; background: var(--side); border-right: 1px solid var(--line); }
+.win .side { background: transparent; border-right: 0; }
+.side .me { display: flex; gap: 10px; align-items: center; padding: 6px 10px 12px; }
+.side .me-ico { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line-strong); display: grid; place-items: center; background: var(--surface); }
+.side .sec { font: 600 11px var(--f-body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); padding: 12px 10px 4px; display: flex; align-items: center; gap: 6px; }
+.side button.nav { border: 0; background: transparent; text-align: left; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; cursor: pointer; position: relative; font-size: 13px; }
+.side button.nav:hover { background: var(--hover); }
+.side button.nav[aria-current="true"] { background: var(--select); font-weight: 600; }
+.win .side button.nav[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--text); }
+.side .count { margin-left: auto; font: 500 11px var(--f-mono); background: var(--text); color: var(--page); border-radius: 99px; padding: 0 6px; }
+.side .st { margin-left: auto; font-size: 11px; color: var(--text-2); font-weight: 400; display: inline-flex; align-items: center; gap: 5px; }
+.side .spacer { flex: 1; }
+.main { flex: 1; min-width: 0; background: var(--surface); display: flex; flex-direction: column; position: relative; }
+.win .main { border-top-left-radius: 8px; border-left: 1px solid var(--line); border-top: 1px solid var(--line); }
+.main.center { align-items: center; justify-content: center; padding: 28px 16px; }
+.m-head { padding: 18px 24px 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.m-content { padding: 0 24px 20px; flex: 1; }
+.m-status { padding: 8px 24px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-2); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.kicker { font: 600 11px var(--f-body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); display: flex; gap: 6px; align-items: center; }
+.crumbs { display: flex; align-items: center; gap: 4px; font: 700 19px var(--f-head); letter-spacing: -.01em; flex-wrap: wrap; min-width: 0; }
+.crumbs button { border: 0; background: transparent; padding: 2px 4px; border-radius: 5px; cursor: pointer; font: inherit; color: var(--text-2); }
+.crumbs button:hover { background: var(--hover); color: var(--text); }
+.crumbs .cur { padding: 2px 4px; }
+.crumbs .ico { color: var(--text-2); width: 14px; height: 14px; }
+.search { position: relative; width: 240px; max-width: 100%; }
+.search .ico { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-2); }
+.search input { padding-left: 32px; }
+.files { width: 100%; border-collapse: collapse; font-size: 13px; }
+.files th { text-align: left; font-weight: 500; font-size: 12px; color: var(--text-2); padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.files td { padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.files tr.f:hover td { background: var(--hover); }
+.files tr.folder { cursor: pointer; }
+.files td.name { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.files .num { font-family: var(--f-mono); font-size: 12px; color: var(--text-2); text-align: right; }
+.files .act { text-align: right; width: 1%; }
+.files tr.f .getbtn { opacity: 0; }
+.files tr.f:hover .getbtn, .files tr.f .getbtn:focus-visible, .files tr.f.sel .getbtn { opacity: 1; }
+.files tr.sel td { background: var(--select); }
+.disabled-list { opacity: .45; pointer-events: none; }
+.pair-card { width: 100%; max-width: 480px; }
+.logo.hero { width: 52px; height: 52px; margin-left: -6px; }
+.stepper { display: flex; gap: 6px; margin-top: 14px; }
+.stepper i { height: 3px; flex: 1; border-radius: 3px; background: var(--line-strong); }
+.stepper i.on { background: var(--text); }
+.wordin { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+.wbox { position: relative; }
+.wbox input { width: 100%; font: 500 15px var(--f-mono); padding: 9px 8px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 6px; background: var(--surface); color: var(--text); text-transform: lowercase; }
+.wbox input:focus { outline: none; border-bottom-color: var(--text); }
+.wbox .ghost { position: absolute; left: 9px; top: 10px; font: 500 15px var(--f-mono); color: var(--text-2); pointer-events: none; white-space: pre; opacity: .55; }
+.wbox.bad input { border-color: var(--signal); }
+.wbox.unknown input { border-bottom-style: dashed; border-bottom-color: var(--signal); }
+.wbox .idx { position: absolute; right: 7px; top: 11px; font: 500 10px var(--f-mono); color: var(--text-2); }
+.sugg { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 100%; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; }
+.sugg button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 5px 8px; border-radius: 5px; font: 500 13px var(--f-mono); cursor: pointer; }
+.sugg button:first-child { background: var(--select); }
+.fp-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fp-pair .card { padding: 12px; }
+.fp-pair .fp { font-size: 18px; display: block; margin-top: 4px; }
+.xfer { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 34px 1fr auto; gap: 4px 12px; align-items: center; }
+.xfer:last-child { border-bottom: 0; }
+.xfer .fico { grid-row: span 2; width: 34px; height: 34px; border-radius: 7px; border: 1px solid var(--line); display: grid; place-items: center; color: var(--text-2); align-self: start; }
+.xfer .meta { font-size: 12px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.xfer .acts { display: flex; gap: 6px; grid-row: span 2; align-self: center; flex-wrap: wrap; justify-content: flex-end; }
+.xfer .wide { grid-column: 2 / 4; }
+.verified { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-weight: 500; }
+.verified .ico { width: 14px; height: 14px; stroke-width: 2.2; }
+.xfer.err .fico { border-color: var(--signal); color: var(--signal); }
+.tip { position: absolute; z-index: 9; width: 330px; max-width: calc(100% - 24px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); padding: 14px 16px; font-size: 13px; }
+.tip::before { content: ""; position: absolute; top: -7px; left: 40px; width: 12px; height: 12px; background: var(--surface); transform: rotate(45deg); border-left: 1px solid var(--line-strong); border-top: 1px solid var(--line-strong); }
+.kv { display: grid; grid-template-columns: 200px 1fr; gap: 14px 18px; align-items: center; }
+.kv > .k { color: var(--text-2); text-align: right; }
+.kv > .sep { grid-column: 1 / -1; border-top: 1px solid var(--line); margin: 2px 0; }
+.dim { position: absolute; inset: 0; background: rgba(0,0,0,.2); z-index: 4; }
+.dialog { position: absolute; z-index: 5; top: 110px; left: 50%; transform: translateX(-50%); width: min(340px, calc(100% - 24px)); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 20px 18px 16px; }
+.dialog .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.mac .dialog { text-align: center; } .mac .dialog .btns { display: grid; grid-template-columns: 1fr 1fr; }
+.dialog .logo { width: 48px; height: 48px; margin: 0 auto 6px; }
+.win .dialog .logo, .linux .dialog .logo { margin: 0 0 6px -4px; }
+
+/* Tray popover / flyout and notifications */
+.popover { position: absolute; z-index: 6; width: 360px; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--line); font-size: 13px; }
+.mac .popover { top: 6px; right: 150px; }
+.mac .popover::before { content: ""; position: absolute; top: -6px; right: 22px; width: 12px; height: 12px; background: var(--surface); transform: rotate(45deg); border-left: 1px solid var(--line); border-top: 1px solid var(--line); }
+.win .popover { bottom: 58px; right: 70px; border-radius: 8px; }
+.pop-sec { padding: 12px 14px; border-top: 1px solid var(--line); }
+.pop-sec:first-child { border-top: 0; }
+.pop-head { display: flex; align-items: center; gap: 10px; }
+.pop-head .logo { width: 30px; height: 30px; }
+.pop-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.pop-list li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.pop-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pop-foot { display: flex; justify-content: space-between; padding: 6px 8px; border-top: 1px solid var(--line); }
+.pop-foot button { border: 0; background: transparent; padding: 4px 6px; border-radius: 5px; font-size: 12.5px; cursor: pointer; color: var(--text-2); }
+.pop-foot button:hover { background: var(--hover); color: var(--text); }
+.notif { position: absolute; z-index: 8; width: 350px; max-width: calc(100% - 20px); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 10px 12px; display: flex; gap: 10px; font-size: 13px; }
+.mac .notif { top: 38px; right: 10px; font-family: var(--f-mac); }
+.win .notif { bottom: 58px; right: 10px; border-radius: 8px; font-family: var(--f-win); }
+.linux .notif { top: 38px; left: 50%; transform: translateX(-50%); font-family: var(--f-gtk); }
+.notif .logo { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); }
+.w-tabs { display: none; }
+
+/* ---------- Narrow widths (phone viewing) ---------- */
+@media (max-width: 760px) {
+  .top { position: static; }
+  .brand small { display: none; }
+  .states .sgroup { display: none; }
+  .state-select { display: block; padding: 8px 10px; font-size: 14px; }
+  .states { padding-bottom: 10px; }
+  .menubar .left span:not(:first-child) { display: none; }
+  .clock-long { display: none; }
+  .desk { min-height: 0; }
+  .desk-area { padding: 12px 8px; }
+  .desk.win .desk-area { padding-bottom: 60px; }
+  .taskbar .apps { display: none; }
+  .popover { left: 8px !important; right: 8px !important; width: auto; }
+  .mac .popover::before { right: 104px; }
+  .side { display: none; }
+  .w-tabs { display: flex; gap: 2px; padding: 4px 8px 6px; overflow-x: auto; background: var(--side); border-bottom: 1px solid var(--line); }
+  .w-tabs button { border: 0; background: transparent; padding: 6px 10px; border-radius: 5px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+  .w-tabs button[aria-current="true"] { background: var(--select); font-weight: 600; }
+  .app { flex-direction: column; min-height: 520px; }
+  .win .main { border-left: 0; border-top-left-radius: 0; }
+  .m-head { padding: 14px 14px 10px; }
+  .m-content { padding: 0 14px 16px; }
+  .m-status { padding: 8px 14px; }
+  .search { width: 100%; }
+  .files .hide-sm, .table .hide-sm { display: none; }
+  .files tr.f .getbtn { opacity: 1; }
+  .getbtn .lbl { display: none; }
+  .wordin, .code-words { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .fp-pair, .choices { grid-template-columns: 1fr; }
+  .kv { grid-template-columns: 1fr; gap: 4px; }
+  .kv > .k { text-align: left; margin-top: 10px; }
+  .xfer { grid-template-columns: 34px 1fr; }
+  .xfer > :not(.fico) { grid-column: 2; }
+  .xfer .fico { grid-row: span 4; }
+  .xfer .acts { grid-row: auto; justify-content: flex-start; }
+  .linux .tbar .soon { display: none; }
+  .tip { left: 12px !important; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><img class="logo" src="../../brand/logo.webp" alt=""> Pigeon <small>app design v1 · one app, Share + Get · prototype</small></div>
+    <div class="seg" role="group" aria-label="Platform">
+      <button data-plat="mac">macOS</button>
+      <button data-plat="win">Windows</button>
+      <button data-plat="linux">Linux <span class="soon">soon</span></button>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button data-theme-set="auto">Auto</button>
+      <button data-theme-set="light">Light</button>
+      <button data-theme-set="dark">Dark</button>
+    </div>
+  </div>
+  <nav class="states" id="states" aria-label="Screens and states"></nav>
+</header>
+<main class="stage">
+  <div id="frame"></div>
+  <p class="note" id="note"></p>
+</main>
+
+<script>
+(() => {
+/* ---------- Icons ---------- */
+const P = {
+  folder: '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h9A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/>',
+  file: '<path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  down: '<path d="M12 4v12m-5-5 5 5 5-5M5 20h14"/>',
+  up: '<path d="M12 20V8m-5 5 5-5 5 5M5 4h14"/>',
+  chev: '<path d="m9 6 6 6-6 6"/>',
+  laptop: '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>',
+  pc: '<rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/>',
+  tower: '<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M10 7h4M12 17h.01"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 6.2l2.1 2.1M17.7 15.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 17.8l2.1-2.1M17.7 8.3l2.1-2.1"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  shield: '<path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.5-4.5M4 4v3h3M4 13a8 8 0 0 0 14.5 4.5M20 20v-3h-3"/>',
+  pause: '<path d="M9 5v14M15 5v14"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  devices: '<rect x="3" y="5" width="13" height="9" rx="1.2"/><path d="M1.5 17h16"/><rect x="17" y="8" width="5" height="11" rx="1"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
+  open: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  wifi: '<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/>',
+  battery: '<rect x="2" y="7" width="18" height="10" rx="2.5"/><path d="M22 11v2"/><rect x="4" y="9" width="11" height="6" rx="1" fill="currentColor" stroke="none"/>',
+  vol: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  activity: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  share: '<path d="M12 15V3m-4 4 4-4 4 4"/><path d="M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/>',
+  min: '<path d="M4 12h16"/>', max: '<rect x="5" y="5" width="14" height="14" rx="1"/>',
+  qr: '<rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2"/>',
+  caret: '<path d="m6 15 6-6 6 6"/>',
+  right: '<path d="M4 12h15m-5-5 5 5-5 5"/>',
+  left: '<path d="M20 12H5m5-5-5 5 5 5"/>'
+};
+const ic = (n, cls='') => `<svg class="ico ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]||''}</svg>`;
+const LOGO = (cls='', alt='') => `<img class="logo ${cls}" src="../../brand/logo.webp" alt="${alt}">`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- Demo data ---------- */
+const CODE = ['otter','plaza','crumb','vivid'];
+const LINK = 'pigeon-invite1qx8d7k2m4nq9zt6v0hw3c5yr8je2pl7su4af9kg3xb6tm0wd2nq5r';
+// Demo subset only. The real app embeds the full EFF short wordlist (1296 words).
+const WORDS = ('acorn acre agent aged alarm alibi alien alive aloft amber ample amuse angel ankle apron arena armor aroma atlas attic audio avert awake bacon badge bagel baker banjo barn basil batch beach berry bingo blade bloom blurt bonus boots brick brisk broom bunny cabin cable camel candy canoe cargo carol cedar chalk charm chess chili chirp cider civic clamp cliff cloak clove coach cocoa coral couch crane crate creek crisp crown crumb crush crust cubic cupid curly daisy dance decal decoy denim depot diner dizzy dodge dough draft dream drift drone dwarf eagle easel ebony elbow ember equal error evade fable fancy ferry fiber field flame flint flock flora flute focal foggy force frost fruit fudge gecko giant glaze glide globe gravy grove gusto habit hazel heron hobby honey hound humid igloo image inlet ivory jelly jewel joint juice kayak kebab knack koala label lapel latch lemon level lilac linen llama lobby lotus lunar lyric maple marsh mango medal melon mocha model motor mural nacho navel noble north nylon oasis ocean olive omega onion opera orbit otter oxide paddle panda patio peach pearl pecan pedal piano pilot pixel plaza plume polar poppy prism pulse quail quilt radar raven relic ridge river robin rocket rover ruby saddle salsa scarf scout shrub siren skate slope snack solar sonic spice squid stamp stool storm sugar sushi swirl syrup tango thorn tiger toast topaz tulip tundra ultra umbra unity urban vapor velvet venom vivid vocal voter waffle wagon whale wheat yacht yodel zebra zesty').split(' ');
+
+// What each computer shares (and therefore what others see when they Get from it).
+const FS = {
+  'Work Mac': { roots: ['ForHome', 'Projects/Q4'], start: 'ForHome/Reports', dirs: {
+    'ForHome': { folders: ['Reports', 'Photos'], files: [['budget-2027.xlsx','312 KB','22 Nov 2026, 17:40'],['contract-draft.docx','88 KB','21 Nov 2026, 11:02'],['notes.md','6 KB','Today, 08:55']] },
+    'ForHome/Reports': { folders: [], files: [['report-q4.pdf','2.4 MB','Today, 09:12'],['report-q3.pdf','2.1 MB','2 Oct 2026, 16:20'],['deck-v3.key','184 MB','Yesterday, 19:03'],['figures.zip','41 MB','Yesterday, 18:47']] },
+    'ForHome/Photos': { folders: [], files: [['IMG_4021.heic','3.1 MB','19 Nov 2026, 13:30'],['IMG_4022.heic','2.9 MB','19 Nov 2026, 13:31'],['raw-footage.mov','1.2 GB','18 Nov 2026, 10:05']] },
+    'Projects/Q4': { folders: [], files: [['plan.pdf','540 KB','20 Nov 2026, 09:00'],['report-final.pdf','3.0 MB','Today, 08:30'],['timeline.numbers','1.4 MB','17 Nov 2026, 15:12']] } } },
+  'Home PC': { roots: ['Scans', 'Photos 2026'], start: 'Scans', dirs: {
+    'Scans': { folders: ['2025'], files: [['scan-041.pdf','1.2 MB','Today, 08:10'],['renovation-plan.pdf','4.8 MB','Yesterday, 21:30'],['school-form.pdf','310 KB','20 Nov 2026, 19:02']] },
+    'Scans/2025': { folders: [], files: [['scan-001.pdf','900 KB','3 Jan 2025, 10:00'],['scan-002.pdf','1.1 MB','3 Jan 2025, 10:02']] },
+    'Photos 2026': { folders: [], files: [['IMG_2231.jpg','4.2 MB','15 Nov 2026, 12:40'],['IMG_2232.jpg','3.9 MB','15 Nov 2026, 12:41'],['garden.mov','860 MB','14 Nov 2026, 17:05']] } } },
+  'Studio': { roots: ['Renders'], start: 'Renders', dirs: { 'Renders': { folders: [], files: [['shot-010.exr','96 MB','Today, 07:50']] } } }
+};
+const XT = {
+  'Work Mac': [
+    { name: 'deck-v3.key', size: 184, unit: 'MB', got: 113, speed: '11.4 MB/s', route: 'direct', state: 'active' },
+    { name: 'raw-footage.mov', size: 1200, unit: 'MB', got: 216, speed: '1.8 MB/s', route: 'relay', state: 'active' },
+    { name: 'report-q4.pdf', size: 2.4, unit: 'MB', state: 'done', savedAs: 'report-q4 (1).pdf', route: 'direct' },
+    { name: 'notes.md', size: 6, unit: 'KB', state: 'done', route: 'direct' } ],
+  'Home PC': [
+    { name: 'garden.mov', size: 860, unit: 'MB', got: 301, speed: '9.6 MB/s', route: 'direct', state: 'active' },
+    { name: 'IMG_2231.jpg', size: 4.2, unit: 'MB', got: 1.1, speed: '1.2 MB/s', route: 'relay', state: 'active' },
+    { name: 'scan-041.pdf', size: 1.2, unit: 'MB', state: 'done', savedAs: 'scan-041 (1).pdf', route: 'direct' },
+    { name: 'school-form.pdf', size: 310, unit: 'KB', state: 'done', route: 'direct' } ]
+};
+
+/* Per-platform point of view. "me" is the computer the app runs on. */
+const PLAT = {
+  mac: { os: 'macOS', me: 'Work Mac', meIco: 'laptop', thisX: 'this Mac', ThisX: 'This Mac', fp: 'K7QF 2M9X',
+    dl: '~/Downloads/Pigeon', dlShort: 'Downloads/Pigeon', shares: [['ForHome','~/Documents/ForHome','21 files · 1.4 GB'],['Q4','~/Work/Projects/Q4','3 files · 5 MB']],
+    peers: [
+      { name: 'Home PC', ico: 'pc', fp: '4HPN Q2ZA', theyGet: true, iGet: true, seen: '2 min ago', paired: '23 Nov 2026', paired2: '23 Nov 2026', os: 'Windows' },
+      { name: 'Old ThinkPad', ico: 'laptop', fp: 'R2WD 8JTE', theyGet: true, iGet: false, seen: '9 days ago', paired: '2 Nov 2026', os: 'Windows' } ],
+    getFrom: 'Home PC', newPeer: 'Home PC',
+    activity: [['09:41','Home PC','Getting deck-v3.key','184 MB','direct'],['09:39','Home PC','Got report-q4.pdf','2.4 MB','direct'],['08:58','Old ThinkPad','Got notes.md','6 KB','relay']],
+    myFile: 'deck-v3.key' },
+  win: { os: 'Windows', me: 'Home PC', meIco: 'pc', thisX: 'this PC', ThisX: 'This PC', fp: '4HPN Q2ZA',
+    dl: 'C:\\Users\\you\\Downloads\\Pigeon', dlShort: 'Downloads\\Pigeon', shares: [['Scans','C:\\Users\\you\\Scans','5 files · 8 MB'],['Photos 2026','D:\\Photos\\2026','3 files · 868 MB']],
+    peers: [
+      { name: 'Work Mac', ico: 'laptop', fp: 'K7QF 2M9X', theyGet: true, iGet: true, seen: 'now', paired: '23 Nov 2026', paired2: '23 Nov 2026', os: 'macOS' },
+      { name: 'Studio', ico: 'tower', fp: 'P9LT 3VCE', theyGet: true, iGet: false, seen: '3 h ago', paired: '20 Nov 2026', os: 'Linux' } ],
+    getFrom: 'Work Mac', newPeer: 'Work Mac',
+    activity: [['09:30','Work Mac','Getting garden.mov','860 MB','direct'],['09:12','Work Mac','Got scan-041.pdf','1.2 MB','direct'],['07:05','Studio','Got IMG_2232.jpg','3.9 MB','relay']],
+    myFile: 'garden.mov' },
+  linux: { os: 'Linux', me: 'Studio', meIco: 'tower', thisX: 'this computer', ThisX: 'This computer', fp: 'P9LT 3VCE',
+    dl: '~/Downloads/Pigeon', dlShort: '~/Downloads/Pigeon', shares: [['Renders','~/renders','1 file · 96 MB']],
+    peers: [
+      { name: 'Work Mac', ico: 'laptop', fp: 'K7QF 2M9X', theyGet: false, iGet: true, seen: 'now', paired2: '21 Nov 2026', os: 'macOS' },
+      { name: 'Home PC', ico: 'pc', fp: '4HPN Q2ZA', theyGet: true, iGet: false, seen: '3 h ago', paired: '20 Nov 2026', os: 'Windows' } ],
+    getFrom: 'Work Mac', newPeer: 'Home PC',
+    activity: [['06:40','Home PC','Got shot-010.exr','96 MB','direct']],
+    myFile: 'shot-010.exr' }
+};
+const peerOf = (p, n) => PLAT[p].peers.find(x => x.name === n) || { name: n, ico: 'pc', fp: '0000 0000' };
+
+/* ---------- Screens ---------- */
+const SCREENS = [
+  ['First run', 'welcome', 'Welcome'],
+  ['First run', 'pair-choose', 'Pair: which way?'],
+  ['Both', 'tray', { mac: 'Menu bar', win: 'Tray flyout' }],
+  ['Both', 'devices', 'Devices (both ways)'],
+  ['Both', 'settings', 'Settings'],
+  ['Share', 's-folders', 'Shared folders'],
+  ['Share', 's-invite', 'Invite'],
+  ['Share', 's-paired', 'Paired'],
+  ['Share', 's-activity', 'Activity'],
+  ['Share', 'revoke', 'Revoke'],
+  ['Get', 'g-link', 'Paste link'],
+  ['Get', 'g-code', 'Type code'],
+  ['Get', 'g-paired', 'Paired'],
+  ['Get', 'g-browse', 'Browse'],
+  ['Get', 'g-search', 'Search'],
+  ['Get', 'g-transfers', 'Transfers'],
+  ['Get', 'g-relay', 'Relay explained'],
+  ['Problems', 'tray-offline', 'No connection', 1],
+  ['Problems', 's-invite-wrong', 'Wrong code tried', 1],
+  ['Problems', 's-burned', 'Invite used up', 1],
+  ['Problems', 's-expired', 'Invite expired', 1],
+  ['Problems', 'g-code-wrong', 'Wrong code', 1],
+  ['Problems', 'g-burned', 'Invite used up (Get)', 1],
+  ['Problems', 'g-expired', 'Invite expired (Get)', 1],
+  ['Problems', 'g-used', 'Invite already used', 1],
+  ['Problems', 'g-offline', 'Other computer offline', 1],
+  ['Problems', 'g-dropped', 'Dropped, resuming', 1],
+  ['Problems', 'g-changed', 'File changed', 1],
+  ['Problems', 'g-revoked', 'Access removed', 1]
+];
+const screensFor = p => SCREENS.filter(s => !(p === 'linux' && (s[1] === 'tray' || s[1] === 'tray-offline')));
+const labelOf = (s, p) => typeof s[2] === 'string' ? s[2] : s[2][p];
+
+const NOTES = {
+  'welcome': X => `<b>One app, two roles.</b> On every OS you can share folders, get files, or both. First run asks which, and either can be added later.`,
+  'pair-choose': X => `<b>Pairing is one way per invite.</b> The invite is always made on the computer that shares. For both ways, pair twice, once from each side.`,
+  'tray': X => `<b>Daily use from the ${X.os === 'macOS' ? 'menu bar' : 'tray'}.</b> Top half is Share (who can get from ${X.thisX}, what's moving out), bottom half is Get (computers ${X.thisX} can get from). Arrows show direction in Recent. The Signal dot on the icon means a transfer is running.`,
+  'devices': X => `<b>One list, both directions, spelled out.</b> Each computer shows "can get from ${X.thisX}" and "${X.thisX} can get from it" as separate rows, each with its own Revoke or Forget. A missing direction says how to add it.`,
+  'settings': X => `<b>Settings for both roles.</b> This computer's name and fingerprint, Share options (pause, keep awake, alerts) and Get options (download folder, no overwrite).`,
+  's-folders': X => `<b>Share: your folders.</b> Read-only, allow-listed. Paired devices that can get from ${X.thisX} see these and nothing else.`,
+  's-invite': X => `<b>Invite, made on the computer that shares.</b> The link is safe to email; the code stays on screen. The header says which way access will go.`,
+  's-paired': X => `<b>Paired one way.</b> The notification and the sheet both say direction. The follow-up explains how to add the other direction (start on the other computer).`,
+  's-activity': X => `<b>Share activity stays on ${X.thisX}.</b> Who got what from you, pairing events, refused devices.`,
+  'revoke': X => `<b>Revoke removes one direction.</b> The dialog says the other direction is not affected.`,
+  'g-link': X => `<b>Get, step 1.</b> Paste the link from the computer that shares. We check it locally and show which computer and which direction before asking for the code.`,
+  'g-code': X => `<b>Try it:</b> type the code (Tab/Enter accepts a word, space or hyphen moves on, pasting the whole code fills all four). Demo code <span class="mono">otter-plaza-crumb-vivid</span>; anything else costs a try.`,
+  'g-paired': X => `<b>Both fingerprints, and the direction.</b> Plus the follow-up: letting the other computer get from ${X.thisX} is a second pairing that starts here.`,
+  'g-browse': X => `<b>Get: browse another computer.</b> ${X.os === 'macOS' ? 'Reverse flow: the Mac getting files from Home PC.' : 'Click folders, hover a file to Get it.'} Online badge and route at the top, save location at the bottom.`,
+  'g-search': X => `<b>Search file names</b> across everything that computer shares with you.`,
+  'g-transfers': X => `<b>Transfers.</b> Progress, speed, route, resume, and a SHA-256 check before a file counts as done. Never overwrites: the new name is spelled out.`,
+  'g-relay': X => `<b>Relay, in plain words.</b> Slower, not less safe.`,
+  'tray-offline': X => `<b>Honest offline state</b> for both roles: nobody can get from ${X.thisX}, and ${X.thisX} can't get from others, until the connection is back.`,
+  's-invite-wrong': X => `<b>A wrong guess is loud</b> on the sharing computer, while the invite is still open.`,
+  's-burned': X => `<b>3 wrong codes burn the invite.</b> Nothing was shared.`,
+  's-expired': X => `<b>Invites last 12 hours.</b> A normal event, not an error.`,
+  'g-code-wrong': X => `<b>Wrong code.</b> Tries left in words; the boxes keep what was typed.`,
+  'g-burned': X => `<b>Invite used up.</b> The way forward is on the sharing computer.`,
+  'g-expired': X => `<b>Invite expired.</b> Same layout as other invite problems.`,
+  'g-used': X => `<b>Invite already used.</b> If it wasn't you, revoke on the sharing computer.`,
+  'g-offline': X => `<b>The other computer is offline or asleep.</b> Last known list, greyed, with last-seen time.`,
+  'g-dropped': X => `<b>Drops are normal.</b> We say where the download resumes from.`,
+  'g-changed': X => `<b>File changed during transfer, or checksum mismatch.</b> The partial copy is deleted and we say why.`,
+  'g-revoked': X => `<b>Access removed, one direction only.</b> The other direction keeps working; downloaded files stay.`
+};
+
+/* ---------- State ---------- */
+const st = { p: 'mac', s: 'tray', t: 'auto', bare: false, q: 'scan', attempts: 3, code: ['otter','plaza','cru',''], sel: null, path: {}, xfers: {} };
+function xfersFor(p) {
+  if (!st.xfers[p]) st.xfers[p] = (XT[PLAT[p].getFrom] || []).map((x, i) => ({ ...x, id: p + i }));
+  return st.xfers[p];
+}
+function pathFor(p) { return st.path[p] || (st.path[p] = FS[PLAT[p].getFrom].start); }
+
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (PLAT[h.get('p')]) st.p = h.get('p');
+  const s = h.get('s');
+  st.s = (s && screensFor(st.p).some(x => x[1] === s)) ? s : (st.p === 'linux' ? 'g-browse' : 'tray');
+  st.t = ['light','dark','auto'].includes(h.get('t')) ? h.get('t') : 'auto';
+  st.bare = h.get('bare') === '1';
+}
+function writeHash() {
+  const h = new URLSearchParams({ p: st.p, s: st.s });
+  if (st.t !== 'auto') h.set('t', st.t);
+  if (st.bare) h.set('bare', '1');
+  try { history.replaceState(null, '', '#' + h.toString()); } catch (_) {}
+}
+
+/* ---------- Helpers ---------- */
+const B = (label, o = {}) => `<button class="btn ${o.k||''}" ${o.go?`data-go="${o.go}"`:''} ${o.act?`data-act="${o.act}"`:''} ${o.data||''} ${o.dis?'disabled':''} ${o.aria?`aria-label="${esc(o.aria)}"`:''}>${o.i?ic(o.i):''}${label?`<span class="lbl">${label}</span>`:''}</button>`;
+const online = (on = true) => on ? `<span class="pill"><span class="dot"></span>Online</span>` : `<span class="pill off"><span class="dot"></span>Offline</span>`;
+const route = r => r === 'relay' ? `<button class="route relay" data-go="g-relay" title="Why relay?">Relay · slower ${ic('info')}</button>` : `<span class="route">Direct</span>`;
+const flow = (from, to, dashed) => `<div class="flow"><span class="n">${esc(from)}</span><span class="ln ${dashed?'dash':''}"></span><span class="n">${esc(to)}</span></div>`;
+
+/* ---------- Platform chrome ---------- */
+function desk(inner, { trayOpen = false, busy = true, notif = '' } = {}) {
+  const p = st.p;
+  if (p === 'mac') return `<div class="desk mac">
+    <div class="menubar"><div class="left"><span><b>Pigeon</b></span><span>File</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span></div>
+      <div class="right"><button class="mb-item pigeon ${trayOpen?'active':''} ${busy?'busy':''}" data-go="tray" aria-label="Pigeon menu">${LOGO()}</button>
+      <span class="mb-item">${ic('wifi')}</span><span class="mb-item">${ic('battery')}</span><span class="mb-item"><span class="clock-long">Mon 23 Nov&nbsp;</span>09:41</span></div></div>
+    <div class="desk-area">${inner}</div>${notif}</div>`;
+  if (p === 'win') return `<div class="desk win">
+    <div class="desk-area">${inner}</div>${notif}
+    <div class="taskbar"><div class="apps"><span><i></i></span><span><i></i></span><span class="${trayOpen?'':'on'}">${LOGO()}</span><span><i></i></span></div>
+      <div class="tray"><span class="t">${ic('caret')}</span><button class="t ${trayOpen?'active':''} ${busy?'busy':''}" data-go="tray" aria-label="Pigeon in the tray">${LOGO()}</button>
+      <span class="t">${ic('wifi')}</span><span class="t">${ic('vol')}</span><span class="clock">09:41<br>23/11/2026</span></div></div></div>`;
+  return `<div class="desk linux">
+    <div class="gnome-bar"><span class="act">Activities</span><span class="mid">Mon 23 Nov 09:41</span><span class="sys">${ic('wifi')}${ic('vol')}${ic('battery')}</span></div>
+    <div class="desk-area">${inner}</div>${notif}</div>`;
+}
+const NAVKEY = { 'g-browse':'get','g-search':'get','g-offline':'get','g-transfers':'xfer','g-relay':'xfer','g-dropped':'xfer','g-changed':'xfer',
+  's-folders':'share','s-activity':'act','devices':'dev','revoke':'dev','settings':'set','pair-choose':'pair','s-invite':'pair','s-invite-wrong':'pair','s-paired':'dev','s-burned':'pair','s-expired':'pair',
+  'g-link':'pair','g-code':'pair','g-code-wrong':'pair','g-paired':'dev','g-burned':'pair','g-expired':'pair','g-used':'pair','g-revoked':'get' };
+function sidebar() {
+  const X = PLAT[st.p], k = NAVKEY[st.s];
+  const active = xfersFor(st.p).filter(x => x.state === 'active').length;
+  const gets = X.peers.filter(x => x.iGet), offline = st.s === 'g-offline';
+  return `<nav class="side" aria-label="Pigeon">
+    <div class="me"><div class="me-ico">${ic(X.meIco)}</div><div class="grow"><div class="h3">${X.me}</div><div class="small muted">${X.ThisX} · online</div></div></div>
+    <div class="sec">${ic('down')}Get from</div>
+    ${gets.map(g => `<button class="nav" data-go="g-browse" aria-current="${k==='get'}">${ic(g.ico)}${g.name}<span class="st"><span class="dot ${offline?'off':''}"></span></span></button>`).join('')}
+    <button class="nav" data-go="g-transfers" aria-current="${k==='xfer'}">${ic('down')}Transfers${active?`<span class="count">${active}</span>`:''}</button>
+    <div class="sec">${ic('share')}Share</div>
+    <button class="nav" data-go="s-folders" aria-current="${k==='share'}">${ic('folder')}My shared folders</button>
+    <button class="nav" data-go="s-activity" aria-current="${k==='act'}">${ic('activity')}Activity</button>
+    <div class="sec">Devices</div>
+    <button class="nav" data-go="devices" aria-current="${k==='dev'}">${ic('devices')}Devices<span class="st">${X.peers.length}</span></button>
+    <button class="nav" data-go="pair-choose" aria-current="${k==='pair'}">${ic('plus')}Pair a device</button>
+    <div class="spacer"></div>
+    <button class="nav" data-go="settings" aria-current="${k==='set'}">${ic('gear')}Settings</button>
+  </nav>
+  <div class="w-tabs">${[['g-browse','Get','get'],['g-transfers','Transfers','xfer'],['s-folders','Share','share'],['devices','Devices','dev'],['pair-choose','Pair','pair'],['settings','Settings','set']].map(([id,l,kk])=>`<button data-go="${id}" aria-current="${k===kk}">${l}</button>`).join('')}</div>`;
+}
+function windowFrame(main, { side = true, overlay = '', title = 'Pigeon' } = {}) {
+  const p = st.p;
+  const bar = p === 'mac' ? `<div class="tbar"><span class="lights"><i></i><i></i><i></i></span>${esc(title)}</div>`
+    : p === 'win' ? `<div class="tbar">${LOGO()}<span>${esc(title)}</span><div class="caps"><span>${ic('min')}</span><span>${ic('max')}</span><span>${ic('x')}</span></div></div>`
+    : `<div class="tbar"><span class="soon">Coming soon</span>${esc(title)}<span class="gclose">${ic('x')}</span></div>`;
+  return `<div class="window" role="region" aria-label="${esc(title)} window">${bar}<div class="app">${side ? sidebar() : ''}${main}</div>${overlay}</div>`;
+}
+const page = (main, o = {}) => desk(windowFrame(main, o), o);
+
+/* ---------- Tray (macOS menu bar / Windows tray) ---------- */
+function trayPanel(offline) {
+  const X = PLAT[st.p], P1 = peerOf(st.p, X.getFrom);
+  const theyGet = X.peers.filter(x => x.theyGet).map(x => x.name);
+  const rows = offline ? [] : [
+    `<li><span class="spinner"></span><span class="grow trunc">${X.activity[0][1]} is getting <b>${X.myFile}</b></span><span class="small mono muted">61%</span></li>`];
+  rows.push(`<li>${ic('down')}<span class="grow trunc">You got ${XT[X.getFrom][2].name} from ${X.getFrom}</span><span class="small muted">5 min</span></li>`);
+  rows.push(`<li>${ic('up')}<span class="grow trunc">${X.activity[1][1]} got ${X.activity[1][2].replace('Got ','')}</span><span class="small muted">30 min</span></li>`);
+  return `<div class="popover" role="dialog" aria-label="Pigeon">
+    <div class="pop-sec"><div class="pop-head">${LOGO()}<div class="grow"><div class="h2">Pigeon</div><div class="small muted">${offline ? 'Can\u2019t reach the relay' : `${X.me} · relay connected`}</div></div>${online(!offline)}</div>
+      ${offline ? `<div class="banner attn" style="margin-top:10px">${ic('alert')}<p><b>No internet connection.</b> Nobody can get files from ${X.thisX}, and ${X.thisX} can\u2019t get files, until it\u2019s back. Retrying in <span class="mono">12 s</span>.</p></div>` : ''}</div>
+    <div class="pop-sec"><div class="kicker">${ic('share')}Sharing from ${X.thisX} · read-only</div>
+      <ul class="pop-list">${X.shares.map(s => `<li>${ic('folder')}<span class="grow trunc">${s[0]}</span><span class="small muted mono">${s[2].split(' · ')[0]}</span></li>`).join('')}</ul>
+      <div class="small muted" style="margin-top:4px">${theyGet.join(' and ')} can get from ${X.thisX}</div></div>
+    <div class="pop-sec"><div class="kicker">${ic('down')}Get from</div>
+      <ul class="pop-list"><li>${ic(P1.ico)}<span class="grow trunc">${P1.name}</span><span class="small muted row" style="gap:5px"><span class="dot ${offline?'off':''}"></span>${offline?'unknown':'online'}</span>${B('Browse', { k: 'sm', go: 'g-browse' })}</li></ul></div>
+    <div class="pop-sec"><div class="label">Recent</div><ul class="pop-list">${rows.join('')}</ul></div>
+    <div class="pop-sec pop-actions">${B('Get files', { k: 'primary', go: 'g-browse', i: 'down' })}${B('Pair a device', { go: 'pair-choose', i: 'plus' })}</div>
+    <div class="pop-foot"><button data-go="settings">Pause sharing</button><button data-go="devices">Open Pigeon</button><button>Quit</button></div>
+  </div>`;
+}
+
+/* ---------- Share side ---------- */
+function inviteMain(kind) {
+  const X = PLAT[st.p];
+  if (kind === 'burned' || kind === 'expired') return `<div class="main center"><div class="pair-card">
+    <div class="big-check ${kind==='burned'?'big-x':''}">${ic(kind==='burned'?'x':'clock','lg')}</div>
+    <h1 class="h1">${kind==='burned' ? 'This invite is used up' : 'This invite expired'}</h1>
+    <p class="muted" style="margin:8px 0 16px">${kind==='burned'
+      ? `3 wrong codes were typed, so it stopped working. Nothing was shared. If you didn\u2019t type them, someone else has your link: make a new invite and keep the code on screen.`
+      : 'Invites last 12 hours. Nobody paired with it. Make a new one when you\u2019re ready.'}</p>
+    <div class="row">${B('Make a new invite', { k: 'primary', go: 's-invite' })}${B('Close', { go: 'devices' })}</div></div></div>`;
+  const wrong = kind === 'wrong';
+  return `<div class="main"><div class="m-head"><div class="grow"><div class="kicker">${ic('share')}Share · invite</div><div class="h1" style="margin-top:4px">Let a device get files from ${X.thisX}</div></div>
+      <span class="small muted mono">Expires in 11 h 58 m</span></div>
+    <div class="m-content" style="max-width:640px">
+      <div class="card" style="padding:10px 12px;margin-bottom:14px">${flow(X.me, 'The device that pairs')}<div class="small muted" style="margin-top:6px">It will be able to get files from ${X.thisX}\u2019s shared folders, read-only. This doesn\u2019t let ${X.thisX} get files from it.</div></div>
+      ${wrong ? `<div class="banner attn" style="margin-bottom:14px">${ic('alert')}<p><b>Someone typed a wrong code. 2 tries left.</b> If that wasn\u2019t you, cancel this invite.</p></div>` : ''}
+      <div class="row" style="align-items:flex-start"><span class="step-n">1</span><div class="grow">
+        <div class="h3">Send this link to the other device</div>
+        <div class="small muted" style="margin:2px 0 8px">Email or chat to yourself is fine. The link alone can\u2019t pair.</div>
+        <div class="linkbox"><code>${LINK}</code>${B('Copy', { i: 'copy', act: 'copy' })}</div></div></div>
+      <div class="row" style="margin-top:18px;align-items:flex-start"><span class="step-n">2</span><div class="grow">
+        <div class="h3">On that device, type this code</div>
+        <div class="small muted" style="margin:2px 0 8px">Don\u2019t send it. Read it from here, or take a photo with your phone.</div>
+        <div class="code-words">${CODE.map((w,i)=>`<div><b>${w}</b><small>${i+1}</small></div>`).join('')}</div></div></div>
+      <div class="row small muted" style="margin-top:14px;gap:14px;flex-wrap:wrap"><span class="row" style="gap:6px"><span class="spinner"></span>Waiting for a device…</span><span>Single use</span><span>${wrong ? '2 tries left' : '3 tries'}</span></div>
+      <div class="row" style="margin-top:16px;flex-wrap:wrap">${B('Show QR', { i: 'qr', dis: true })}<span class="small muted grow">QR comes later</span>
+        ${B('Cancel invite', { k: wrong ? 'danger' : '', go: 'devices' })}${B('Demo: device pairs', { k: 'demo', go: 's-paired' })}</div>
+    </div></div>`;
+}
+function sPaired() {
+  const X = PLAT[st.p], N = peerOf(st.p, X.newPeer);
+  return `<div class="main center"><div class="pair-card">
+    <div class="big-check">${ic('check','lg')}</div>
+    <h1 class="h1">${N.name} can now get files from ${X.thisX}</h1>
+    <p class="muted" style="margin:6px 0 14px">Read-only, from your shared folders. You can revoke it any time in Devices.</p>
+    <div class="card" style="padding:12px;margin-bottom:12px">${flow(X.me, N.name)}
+      <div class="row" style="margin-top:10px"><span class="label grow">${N.name}\u2019s fingerprint</span><span class="fp" style="font-size:16px">${N.fp}</span></div>
+      <div class="small muted">${N.name} shows the same code as <i>${N.os==='macOS'?'This Mac':N.os==='Linux'?'This computer':'This PC'}</i>.</div></div>
+    <div class="banner">${ic('info')}<p><b>Want to get files from ${N.name} too?</b> Pairing works one way. Start on ${N.name}: <i>Pair a device \u2192 Let a device get files</i>, then paste its link here.</p></div>
+    <div class="row" style="margin-top:16px;justify-content:space-between;flex-wrap:wrap">${B('Paste a link from ' + N.name, { go: 'g-link' })}${B('Done', { k: 'primary', go: 'devices' })}</div>
+  </div></div>`;
+}
+function sharedFolders() {
+  const X = PLAT[st.p], theyGet = X.peers.filter(x => x.theyGet);
+  return `<div class="main"><div class="m-head"><div class="grow"><div class="kicker">${ic('share')}Share</div><div class="h1" style="margin-top:4px">My shared folders</div></div>${B('Add folder…', { i: 'plus' })}</div>
+    <div class="m-content">
+      <div class="list">${X.shares.map(s => `<div class="li">${ic('folder','lg')}<div class="grow"><div class="h3">${s[0]}</div><div class="small muted mono trunc">${esc(s[1])} · ${s[2]}</div></div><span class="tag">Read-only</span>${B('Stop sharing', { k: 'sm' })}</div>`).join('')}</div>
+      <div class="label" style="margin-top:20px">Who can get these</div>
+      <div class="list" style="margin-top:6px">${theyGet.map(d => `<div class="li">${ic(d.ico)}<span class="grow"><b>${d.name}</b> <span class="muted small">can get from ${X.thisX} · seen ${d.seen}</span></span>${B('Revoke', { k: 'sm danger', go: 'revoke' })}</div>`).join('')}
+        <div class="li">${B('Let another device get files', { k: 'sm ghost', i: 'plus', go: 's-invite' })}</div></div>
+      <div class="banner" style="margin-top:14px">${ic('shield')}<p>Devices see these folders and nothing else. Links that point outside a shared folder are skipped. Hidden files are not shown.</p></div>
+    </div></div>`;
+}
+function activity() {
+  const X = PLAT[st.p], a = X.activity;
+  return `<div class="main"><div class="m-head"><div class="grow"><div class="kicker">${ic('share')}Share</div><div class="h1" style="margin-top:4px">Activity</div></div>
+      <div class="seg"><button aria-pressed="true">All</button><button>Files</button><button>Security</button></div></div>
+    <div class="m-content"><table class="table"><thead><tr><th>When</th><th>Device</th><th>What</th><th class="hide-sm">Route</th></tr></thead><tbody>
+      ${a.map(r => `<tr><td class="mono small">${r[0]}</td><td>${r[1]}</td><td>${r[2]} <span class="muted">(${r[3]})</span></td><td class="hide-sm">${r[4]==='relay'?'<span class="route" style="border-style:dashed">Relay</span>':route('direct')}</td></tr>`).join('')}
+      <tr><td class="mono small">08:50</td><td>${a[0][1]}</td><td>Paired: can get from ${X.thisX} <span class="fp small">${peerOf(st.p,a[0][1]).fp}</span></td><td class="hide-sm"></td></tr>
+      <tr><td class="mono small">08:49</td><td class="muted">Unknown</td><td><span style="color:var(--signal-text)">Wrong pairing code · 2 tries left</span></td><td class="hide-sm"></td></tr>
+      <tr><td class="mono small">Sun 22:13</td><td class="muted">Unknown <span class="fp small">7TZC 0LMA</span></td><td><span style="color:var(--signal-text)">Refused: not a paired device</span></td><td class="hide-sm"></td></tr>
+    </tbody></table>
+    <p class="small muted" style="margin-top:12px">Only what others got from ${X.thisX}. Your own downloads are in Transfers. Kept 30 days on ${X.thisX}, never sent anywhere.</p></div></div>`;
+}
+
+/* ---------- Devices (both directions) ---------- */
+function devices() {
+  const X = PLAT[st.p];
+  return `<div class="main"><div class="m-head"><div class="grow"><div class="h1">Devices</div><div class="small muted">Each pairing works one way. Both directions are listed separately.</div></div>${B('Pair a device', { k: 'primary', i: 'plus', go: 'pair-choose' })}</div>
+    <div class="m-content">${X.peers.map(d => `<div class="card" style="margin-bottom:12px;overflow:hidden">
+      <div class="row" style="padding:12px;flex-wrap:wrap">${ic(d.ico,'lg')}<div class="grow"><div class="h3">${d.name} <span class="muted small" style="font-weight:400">· ${d.os}</span></div><div class="small muted"><span class="fp">${d.fp}</span> · seen ${d.seen}</div></div>${online(d.seen === 'now' || /min/.test(d.seen))}</div>
+      ${d.theyGet ? `<div class="dir"><span class="arrow">${ic('up')}</span><span class="grow"><b>${d.name}</b> can get files from ${X.thisX} <span class="small muted">· since ${d.paired}</span></span>${B('Revoke', { k: 'sm danger', go: 'revoke' })}</div>`
+        : `<div class="dir no"><span class="arrow">${ic('up')}</span><span class="grow">${d.name} can\u2019t get files from ${X.thisX}</span>${B('Let it get files', { k: 'sm', go: 's-invite' })}</div>`}
+      ${d.iGet ? `<div class="dir"><span class="arrow">${ic('down')}</span><span class="grow"><b>${X.ThisX}</b> can get files from ${d.name} <span class="small muted">· since ${d.paired2}</span></span>${B('Browse', { k: 'sm', go: 'g-browse' })}${B('Forget', { k: 'sm danger', go: 'g-revoked' })}</div>`
+        : `<div class="dir no"><span class="arrow">${ic('down')}</span><span class="grow">${X.ThisX} can\u2019t get files from ${d.name}. <span class="small">To add it, start on ${d.name}: Pair a device \u2192 Let a device get files.</span></span>${B('Paste a link', { k: 'sm', go: 'g-link' })}</div>`}
+    </div>`).join('')}
+    <p class="small muted">Fingerprint = first 8 characters of a device key. Compare it with what that device shows for itself.</p></div></div>`;
+}
+function revokeOverlay() {
+  const X = PLAT[st.p], d = X.peers.find(x => x.theyGet);
+  return `<div class="dim"></div><div class="dialog" role="alertdialog" aria-label="Revoke">${LOGO()}
+    <div class="h3" style="font-size:15px">Stop ${d.name} getting files from ${X.thisX}?</div>
+    <p class="small" style="margin:8px 0 0">It\u2019s disconnected now and can\u2019t get files until you pair again. A transfer in progress stops.${d.iGet ? ` ${X.ThisX} can still get files from ${d.name}.` : ''}</p>
+    <div class="btns">${B('Cancel', { go: 'devices' })}${B('Revoke', { k: 'danger-fill', go: 'devices' })}</div></div>`;
+}
+
+/* ---------- Pairing (choose, get side) ---------- */
+function pairChoose() {
+  const X = PLAT[st.p];
+  return `<div class="main"><div class="m-head"><div class="grow"><div class="h1">Pair a device</div><div class="small muted">Which way should files go?</div></div></div>
+    <div class="m-content" style="max-width:760px">
+      <div class="choices">
+        <button class="choice" data-go="s-invite">${flow(X.me, 'Other device')}<div><div class="h2">Let a device get files from ${X.thisX}</div>
+          <p class="small muted" style="margin:4px 0 0">You get a link and a 4-word code here. The other device pastes the link and types the code.</p></div><span class="kicker">${ic('share')}Share</span></button>
+        <button class="choice" data-go="g-link">${flow('Other device', X.me)}<div><div class="h2">Get files from another device</div>
+          <p class="small muted" style="margin:4px 0 0">Start on that device: Pair a device \u2192 Let a device get files. Then paste its link here and type its code.</p></div><span class="kicker">${ic('down')}Get</span></button>
+      </div>
+      <div class="banner" style="margin-top:16px">${ic('info')}<p><b>Each pairing works one way.</b> The invite is always made on the computer that shares. To get files both ways, pair twice, once from each side.</p></div>
+    </div></div>`;
+}
+function getPairShell(inner, step) {
+  return `<div class="main center"><div class="pair-card">
+    <div class="kicker">${ic('down')}Get · pair</div>
+    ${step ? `<div class="stepper"><i class="on"></i><i class="${step>1?'on':''}"></i></div><div class="small muted" style="margin-top:6px">Step ${step} of 2</div>` : ''}
+    ${inner}</div></div>`;
+}
+function gLink() {
+  const X = PLAT[st.p], G = X.getFrom;
+  return getPairShell(`<h1 class="h1" style="margin-top:12px">Get files from another device</h1>
+    <p class="muted" style="margin:6px 0 16px">On that device, open Pigeon \u2192 <b>Pair a device</b> \u2192 <b>Let a device get files</b>. Paste the link it gives you.</p>
+    <label class="small" for="lnk" style="font-weight:500">Invite link</label>
+    <div class="row" style="margin-top:4px"><input class="field mono" id="lnk" value="${LINK}" style="font-size:12px"> ${B('Paste', { k: 'sm' })}</div>
+    <div class="card" style="padding:10px 12px;margin-top:12px"><div class="row">${ic('check')}<div class="grow small"><b>Invite from ${G}</b><div class="muted">Expires in 9 h 12 m · single use</div></div></div>
+      <div style="margin-top:8px">${flow(G, X.me)}</div><div class="small muted" style="margin-top:6px">${X.ThisX} will be able to get files from ${G}. Not the other way.</div></div>
+    <div class="row" style="margin-top:18px;justify-content:flex-end">${B('Next', { k: 'primary lg', go: 'g-code' })}</div>`, 1);
+}
+function gCode(wrong) {
+  const X = PLAT[st.p], left = st.attempts;
+  return getPairShell(`<h1 class="h1" style="margin-top:12px">Type the code from ${X.getFrom}</h1>
+    <p class="muted" style="margin:6px 0 16px">4 words, shown on ${X.getFrom} next to the link. Not case-sensitive.</p>
+    ${wrong ? `<div class="banner attn" style="margin-bottom:14px">${ic('alert')}<p><b>That code didn\u2019t match. ${left} ${left===1?'try':'tries'} left.</b> Check each word on ${X.getFrom}\u2019s screen. After ${left===1?'one more wrong code':'3 wrong codes'}, the invite stops working.</p></div>` : ''}
+    <div class="wordin" id="wordin">${[0,1,2,3].map(i => `<div class="wbox ${wrong?'bad':''}"><input data-w="${i}" value="${esc(st.code[i])}" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Word ${i+1}"><span class="ghost"></span><span class="idx">${i+1}</span></div>`).join('')}</div>
+    <div class="small muted" style="margin-top:8px">Tip: paste the whole code, or press <span class="kbd">Tab</span> to accept a word.</div>
+    <div class="card" style="padding:10px 12px;margin-top:16px;display:flex;gap:10px;align-items:center">${ic(peerOf(st.p, X.getFrom).ico)}<div class="grow small"><b>${X.getFrom}</b> <span class="muted">· invite expires in 9 h 12 m</span></div><span class="small muted">${left} ${left===1?'try':'tries'}</span></div>
+    <div class="row" style="margin-top:18px;justify-content:space-between">${B('Back', { go: 'g-link' })}${B('Pair', { k: 'primary lg', act: 'pair' })}</div>`, 2);
+}
+function gPaired() {
+  const X = PLAT[st.p], G = peerOf(st.p, X.getFrom);
+  return getPairShell(`<div class="big-check" style="margin-top:14px">${ic('check','lg')}</div>
+    <h1 class="h1">${X.ThisX} can now get files from ${G.name}</h1>
+    <p class="muted" style="margin:6px 0 14px">Check these match what ${G.name} shows. If they don\u2019t, click Forget and pair again.</p>
+    <div class="fp-pair"><div class="card">${ic(G.ico)}<div class="label" style="margin-top:6px">${G.name}</div><span class="fp">${G.fp}</span></div>
+      <div class="card">${ic(X.meIco)}<div class="label" style="margin-top:6px">${X.ThisX}</div><span class="fp">${X.fp}</span></div></div>
+    <div class="banner" style="margin-top:14px">${ic('info')}<p><b>Should ${G.name} get files from ${X.thisX} too?</b> That\u2019s a second pairing, and it starts here: ${X.thisX} makes the invite, ${G.name} types the code.</p></div>
+    <div class="row" style="margin-top:18px;justify-content:space-between;flex-wrap:wrap">${B('Let ' + G.name + ' get from ' + X.thisX, { go: 's-invite', i: 'share' })}${B('Browse ' + G.name, { k: 'primary', go: 'g-browse' })}</div>`);
+}
+function gProblem(kind) {
+  const X = PLAT[st.p], G = X.getFrom;
+  const C = {
+    'g-expired': ['clock', 'This invite expired', `Invites last 12 hours. On ${G}, click <b>Pair a device</b> to make a new one.`],
+    'g-burned': ['x', 'This invite is used up', `3 wrong codes were typed, so it stopped working. Make a new invite on ${G} and type the code exactly as shown.`],
+    'g-used': ['alert', 'This invite was already used', `A device already paired with it. If that was you, you\u2019re done. If not, someone else has your link and code: on ${G}, open <b>Devices</b> and revoke anything you don\u2019t recognise.`]
+  }[kind];
+  return getPairShell(`<div class="big-check ${kind!=='g-expired'?'big-x':''}" style="margin-top:14px">${ic(C[0],'lg')}</div>
+    <h1 class="h1">${C[1]}</h1><p class="muted" style="margin:8px 0 18px">${C[2]}</p>
+    <div class="row">${B('Paste a new link', { k: 'primary', go: 'g-link' })}</div>`);
+}
+function gRevoked() {
+  const X = PLAT[st.p], G = peerOf(st.p, X.getFrom);
+  return `<div class="main center"><div class="pair-card">
+    <div class="big-check big-x">${ic('x','lg')}</div>
+    <h1 class="h1">${G.name} no longer lets ${X.thisX} get files</h1>
+    <p class="muted" style="margin:8px 0 12px">It was revoked on ${G.name}, or ${G.name} was reset. Files you already got are still in <span class="mono">${esc(X.dlShort)}</span>.</p>
+    ${G.theyGet ? `<div class="banner" style="margin-bottom:16px">${ic('info')}<p>The other direction is separate: ${G.name} can still get files from ${X.thisX}. Manage it in Devices.</p></div>` : ''}
+    <div class="row" style="flex-wrap:wrap">${B('Pair again', { k: 'primary', go: 'g-link' })}${B('Forget ' + G.name, { go: 'devices' })}</div></div></div>`;
+}
+
+/* ---------- Get: browse / transfers ---------- */
+function listing(fs, path) {
+  const d = fs.dirs[path] || { folders: [], files: [] };
+  return [...d.folders.map(f => ({ folder: true, name: f, path: path + '/' + f, count: (fs.dirs[path + '/' + f]?.files.length || 0) })),
+          ...d.files.map(([name,size,mod]) => ({ name, size, mod }))];
+}
+function filesTable(rows, { disabled = false, showPath = false } = {}) {
+  return `<table class="files ${disabled?'disabled-list':''}"><thead><tr><th>Name</th>${showPath?'<th class="hide-sm">Folder</th>':''}<th class="num">Size</th><th class="hide-sm">Modified</th><th></th></tr></thead><tbody>
+    ${rows.map(r => r.folder
+      ? `<tr class="f folder" data-act="open" data-path="${esc(r.path)}"><td class="name"><div class="row">${ic('folder')}<span class="trunc">${esc(r.name)}</span></div></td>${showPath?'<td class="hide-sm"></td>':''}<td class="num">${r.count} items</td><td class="hide-sm"></td><td class="act">${ic('chev')}</td></tr>`
+      : `<tr class="f ${st.sel===r.name?'sel':''}" data-act="sel" data-name="${esc(r.name)}"><td class="name"><div class="row">${ic('file')}<span class="trunc">${esc(r.name)}</span></div></td>${showPath?`<td class="hide-sm muted small">${esc(r.path)}</td>`:''}<td class="num">${r.size}</td><td class="hide-sm muted small">${r.mod}</td><td class="act">${B('Get', { k: 'sm getbtn', i: 'down', act: 'get', aria: 'Get ' + r.name, data: `data-name="${esc(r.name)}" data-size="${esc(r.size)}"` })}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+function browse(s) {
+  const X = PLAT[st.p], G = X.getFrom, fs = FS[G], off = s === 'g-offline', search = s === 'g-search';
+  const path = pathFor(st.p);
+  if (st.sel === null) st.sel = fs.dirs[path]?.files[0]?.[0];
+  let rows, title;
+  if (search) {
+    const q = st.q.toLowerCase(); rows = [];
+    Object.entries(fs.dirs).forEach(([p,d]) => d.files.forEach(([name,size,mod]) => { if (q && name.toLowerCase().includes(q)) rows.push({ name, size, mod, path: p }); }));
+    title = `<div class="crumbs"><span class="cur">Results for \u201c${esc(st.q)}\u201d</span></div>`;
+  } else {
+    let c = `<button data-act="open" data-path="${fs.roots[0]}">${G}</button>`;
+    const root = fs.roots.find(r => path.startsWith(r)) || fs.roots[0];
+    c += ic('chev') + (path === root ? `<span class="cur">${esc(root)}</span>` : `<button data-act="open" data-path="${esc(root)}">${esc(root)}</button>`);
+    if (path !== root) c += ic('chev') + `<span class="cur">${esc(path.slice(root.length + 1))}</span>`;
+    rows = listing(fs, path); title = `<div class="crumbs">${c}</div>`;
+  }
+  return `<div class="main">
+    <div class="m-head" style="padding-bottom:4px"><div class="kicker" style="width:100%">${ic('down')}Get from ${G} ${ic('chev')} ${fs.roots.map(r => `<button class="chip" style="padding:1px 8px;font-size:11.5px;text-transform:none;letter-spacing:0" data-act="open" data-path="${esc(r)}" aria-current="${!search && path.startsWith(r)}">${esc(r)}</button>`).join(' ')}</div></div>
+    <div class="m-head" style="padding-top:6px">${title}<div class="grow"></div>
+      <div class="search">${ic('search')}<input class="field" id="q" placeholder="Search ${G}" value="${search?esc(st.q):''}" aria-label="Search file names" ${off?'disabled':''}></div>${online(!off)}</div>
+    ${off ? `<div style="padding:0 24px 12px"><div class="banner attn">${ic('alert')}<p><b>${G} is offline.</b> Last seen today at 18:42. It may be asleep, shut down, or off the internet. Pigeon reconnects on its own. This list is from 18:42; you can\u2019t get files until ${G} is back.</p></div></div>` : ''}
+    ${search ? `<div class="m-content" style="flex:none;padding-bottom:6px"><span class="small muted">${rows.length} ${rows.length===1?'file':'files'} in ${fs.roots.join(' and ')} · names only</span></div>` : ''}
+    <div class="m-content">${rows.length ? filesTable(rows, { disabled: off, showPath: search }) : `<p class="muted" style="padding:30px 0;text-align:center">No file names match \u201c${esc(st.q)}\u201d.</p>`}</div>
+    <div class="m-status">${ic('shield')}<span>Read-only. Files stay on ${G}.</span><span class="grow"></span><span>Saving to <span class="mono">${esc(X.dlShort)}</span></span></div>
+  </div>`;
+}
+const fmt = x => x.unit === 'KB' ? x.size + ' KB' : x.size >= 1000 ? (x.size/1000).toFixed(1) + ' GB' : x.size + ' MB';
+const fmtGot = x => x.got >= 1000 ? (x.got/1000).toFixed(2) + ' GB' : x.got < 10 ? x.got.toFixed(1) + ' MB' : Math.round(x.got) + ' MB';
+function eta(x) { const s = Math.max(1, Math.round((x.size - x.got) / parseFloat(x.speed))); return s >= 60 ? Math.round(s/60) + ' min left' : s + ' s left'; }
+function xferRow(x) {
+  const pct = x.got != null ? Math.round(x.got / x.size * 100) : 100;
+  if (x.state === 'done') return `<div class="xfer"><div class="fico">${ic('file')}</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><span class="h3 trunc">${esc(x.savedAs || x.name)}</span><span class="small muted mono">${fmt(x)}</span></div>
+    <div class="acts">${B('Open', { k: 'sm', i: 'open' })}${B('Show in folder', { k: 'sm', i: 'folder' })}</div>
+    <div class="meta"><span class="verified">${ic('check')}SHA-256 verified</span>${route(x.route)}<span>Done 09:39</span>${x.savedAs ? `<span>Saved as a new copy: <span class="mono">${esc(x.name)}</span> already existed</span>` : ''}</div></div>`;
+  if (x.state === 'changed' || x.state === 'mismatch') return `<div class="xfer err"><div class="fico">${ic('alert')}</div>
+    <div class="h3 trunc">${esc(x.name)}</div><div class="acts">${B(x.state==='changed'?'Get again':'Try again', { k: 'sm', i: 'refresh' })}</div>
+    <div class="meta">${x.state==='changed'
+      ? `<span style="color:var(--signal-text);font-weight:500">Changed on ${PLAT[st.p].getFrom} while downloading.</span><span>The partial copy was deleted so you don\u2019t get a mix of old and new.</span>`
+      : `<span style="color:var(--signal-text);font-weight:500">Checksum didn\u2019t match.</span><span>The file was discarded. Nothing broken was saved.</span>`}</div></div>`;
+  const paused = x.state === 'reconnecting' || x.state === 'waiting';
+  const status = x.state === 'reconnecting' ? `<span class="row" style="gap:6px"><span class="spinner"></span>Connection lost at ${pct}%. Reconnecting… resumes from <span class="mono">${fmtGot(x)}</span></span>`
+    : x.state === 'waiting' ? `<span>Paused until ${PLAT[st.p].getFrom} is reachable. Resumes from <span class="mono">${fmtGot(x)}</span>; nothing is downloaded twice.</span>`
+    : `<span class="mono" data-m="${x.id}">${fmtGot(x)} of ${fmt(x)} · ${x.speed} · ${eta(x)}</span>`;
+  return `<div class="xfer"><div class="fico">${ic('file')}</div>
+    <div class="row" style="gap:8px"><span class="h3 trunc">${esc(x.name)}</span><span class="small muted mono" data-p="${x.id}">${pct}%</span></div>
+    <div class="acts">${paused ? B('Cancel', { k: 'sm ghost', i: 'x' }) : B('Pause', { k: 'sm ghost', i: 'pause' })}</div>
+    <div class="bar wide ${paused?'paused':''}"><i data-b="${x.id}" style="width:${pct}%"></i></div>
+    <div class="meta wide">${route(x.route)}${status}</div></div>`;
+}
+function transfers(s) {
+  const X = PLAT[st.p], base = xfersFor(st.p), done = base.filter(x => x.state === 'done');
+  let list = base;
+  if (s === 'g-dropped') { const a = base.filter(x => x.state !== 'done'); list = [{ ...a[0], id: 'd1', state: 'reconnecting' }, { ...a[1], id: 'd2', state: 'waiting', got: a[1].size * .48 }, ...done]; }
+  if (s === 'g-changed') { const f = FS[X.getFrom].dirs[FS[X.getFrom].roots[0]].files; list = [{ id: 'c1', name: f[0][0], state: 'changed' }, { id: 'c2', name: f[1][0], state: 'mismatch' }, ...done]; }
+  const active = list.filter(x => x.state !== 'done');
+  const tip = s === 'g-relay' ? `<div class="tip" style="top:278px;left:46px" role="dialog" aria-label="Why relay">
+      <div class="h3">Why \u201cRelay\u201d?</div>
+      <p style="margin:6px 0 0">Something between ${X.thisX} and ${X.getFrom} (usually a firewall) blocks a direct link, so the bytes go through Pigeon\u2019s relay instead.</p>
+      <div style="margin:10px 0">${flow(X.getFrom, 'Relay').replace('</div>', '')}<span class="ln"></span><span class="n">${X.me}</span></div></div>
+      <p style="margin:0">They\u2019re encrypted end to end; the relay can\u2019t read them. <b>Slower, not less safe.</b> Pigeon switches to Direct if it becomes possible.</p>
+      <div class="row" style="justify-content:flex-end;margin-top:10px">${B('Got it', { k: 'sm primary', go: 'g-transfers' })}</div></div>` : '';
+  return `<div class="main">
+    <div class="m-head"><div class="grow"><div class="kicker">${ic('down')}Get</div><div class="h1" style="margin-top:4px">Transfers</div></div>${B('Clear finished', { k: 'sm ghost' })}</div>
+    <div class="m-content">
+      ${active.length ? `<div class="label">In progress · from ${X.getFrom}</div>${active.map(xferRow).join('')}` : ''}
+      ${done.length ? `<div class="label" style="margin-top:18px">Finished</div>${done.map(xferRow).join('')}` : ''}
+    </div>
+    <div class="m-status">${ic('folder')}<span>Saving to <span class="mono">${esc(X.dl)}</span></span><button class="btn sm ghost" data-go="settings">Change</button><span class="grow"></span><span>Never overwrites</span></div>
+    ${tip}</div>`;
+}
+
+/* ---------- Settings / welcome ---------- */
+function settings() {
+  const X = PLAT[st.p];
+  const tg = (on, dis) => `<button class="toggle" role="switch" aria-checked="${on}" ${dis?'disabled':''} data-act="toggle"></button>`;
+  return `<div class="main"><div class="m-head"><div class="h1">Settings</div></div>
+    <div class="m-content"><div class="kv">
+      <div class="k">This computer\u2019s name</div><div><input class="field" style="max-width:240px" value="${X.me}"></div>
+      <div class="k">Fingerprint</div><div><span class="fp">${X.fp}</span> <span class="small muted">· other devices show this for ${X.me}</span></div>
+      <div class="k">Open at login</div><div>${tg(true)}</div>
+      <div class="sep"></div>
+      <div class="k"><span class="kicker" style="justify-content:flex-end">${ic('share')}Share</span></div><div class="small muted">When others get files from ${X.thisX}</div>
+      <div class="k">Sharing</div><div class="row">${tg(true)}<span class="small muted">Turn off to pause every device at once.</span></div>
+      <div class="k">Keep awake during transfers</div><div class="row">${tg(false)}<span class="small muted">Stops idle sleep only while someone is getting a file.</span></div>
+      <div class="k">New-pairing alerts</div><div class="row">${tg(true, true)}<span class="small muted">Always on.</span></div>
+      <div class="sep"></div>
+      <div class="k"><span class="kicker" style="justify-content:flex-end">${ic('down')}Get</span></div><div class="small muted">When ${X.thisX} gets files from others</div>
+      <div class="k">Download folder</div><div class="row" style="flex-wrap:wrap"><code class="mono small card" style="padding:6px 10px">${esc(X.dl)}</code>${B('Change…', { k: 'sm' })}</div>
+      <div class="k"></div><div class="small muted">Pigeon never overwrites. If <span class="mono">report.pdf</span> is already there, the new copy is <span class="mono">report (1).pdf</span>.</div>
+      <div class="sep"></div>
+      <div class="k">Relay</div><div class="small">Default (n0.computer) <span class="muted">· sees encrypted bytes only</span></div>
+      <div class="k">Appearance</div><div><div class="seg"><button aria-pressed="true">System</button><button>Light</button><button>Dark</button></div></div>
+      <div class="k"></div><div style="border-top:1px solid var(--line);padding-top:14px">
+        <div class="h3">Reset Pigeon on ${X.thisX}</div><p class="small muted" style="margin:4px 0 8px">Makes a new key. Every pairing, in both directions, is removed.</p>${B('Reset…', { k: 'danger' })}</div>
+    </div></div></div>`;
+}
+function welcome() {
+  const X = PLAT[st.p];
+  return `<div class="main center"><div style="max-width:640px;width:100%">${LOGO('hero', 'Pigeon')}
+    <h1 class="h1" style="margin-top:10px">What do you want to do on ${X.thisX}?</h1>
+    <p class="muted" style="margin:6px 0 18px">You can do both, and change it any time. Nothing is shared until you pick folders.</p>
+    <div class="choices">
+      <button class="choice" data-go="s-folders"><span class="kicker">${ic('share')}Share</span><div class="h2">Share folders from ${X.thisX}</div>
+        <p class="small muted" style="margin:0">Pick folders. Your other computers can get files from them, read-only, after you pair them.</p></button>
+      <button class="choice" data-go="g-link"><span class="kicker">${ic('down')}Get</span><div class="h2">Get files from another computer</div>
+        <p class="small muted" style="margin:0">Browse and download from a computer you own that runs Pigeon and shares folders.</p></button>
+    </div>
+    <div class="row" style="margin-top:18px;justify-content:flex-end">${B('Skip for now', { go: 'devices' })}</div></div></div>`;
+}
+function notif(title, body) {
+  return `<div class="notif" role="status">${LOGO()}<div class="grow"><b>${title}</b><div>${body}</div><div class="small muted">Not you? Open Pigeon \u2192 Devices \u2192 Revoke.</div></div><span class="small muted">now</span></div>`;
+}
+
+function screen(s) {
+  const X = PLAT[st.p];
+  switch (s) {
+    case 'tray': return desk(trayPanel(false), { trayOpen: true });
+    case 'tray-offline': return desk(trayPanel(true), { trayOpen: true, busy: false });
+    case 'welcome': return page(welcome(), { side: false, title: 'Welcome to Pigeon' });
+    case 'pair-choose': return page(pairChoose());
+    case 'devices': return page(devices());
+    case 'revoke': return page(devices(), { overlay: revokeOverlay() });
+    case 'settings': return page(settings());
+    case 's-folders': return page(sharedFolders());
+    case 's-activity': return page(activity());
+    case 's-invite': return page(inviteMain('new'));
+    case 's-invite-wrong': return page(inviteMain('wrong'));
+    case 's-burned': return page(inviteMain('burned'));
+    case 's-expired': return page(inviteMain('expired'));
+    case 's-paired': { const N = peerOf(st.p, X.newPeer); return page(sPaired(), { notif: notif('New device paired', `${N.name} can get files from ${X.thisX} · <span class="fp" style="font-size:12px">${N.fp}</span>`) }); }
+    case 'g-link': return page(gLink());
+    case 'g-code': return page(gCode(false));
+    case 'g-code-wrong': return page(gCode(true));
+    case 'g-paired': return page(gPaired());
+    case 'g-burned': case 'g-expired': case 'g-used': return page(gProblem(s));
+    case 'g-revoked': return page(gRevoked());
+    case 'g-browse': case 'g-search': case 'g-offline': return page(browse(s));
+    case 'g-transfers': case 'g-relay': case 'g-dropped': case 'g-changed': return page(transfers(s));
+  }
+}
+
+/* ---------- Render ---------- */
+const $ = sel => document.querySelector(sel);
+let timer = null;
+function render() {
+  if (st.s === 'g-code-wrong' && st.attempts === 3) { st.attempts = 2; st.code = ['otter','plaza','crust','vivid']; }
+  if (st.t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', st.t);
+  document.body.classList.toggle('bare', st.bare);
+  document.querySelectorAll('[data-plat]').forEach(b => b.setAttribute('aria-pressed', b.dataset.plat === st.p));
+  document.querySelectorAll('[data-theme-set]').forEach(b => b.setAttribute('aria-pressed', b.dataset.themeSet === st.t));
+  const groups = {};
+  screensFor(st.p).forEach(s => (groups[s[0]] = groups[s[0]] || []).push([s[1], labelOf(s, st.p), s[3]]));
+  $('#states').innerHTML = Object.entries(groups).map(([g,items]) => `<div class="sgroup"><span>${g}</span>${items.map(([id,l,w]) => `<button class="chip ${w?'warn':''}" data-go="${id}" aria-current="${st.s===id}">${l}</button>`).join('')}</div>`).join('')
+    + `<select class="field state-select" id="pick" aria-label="Screen">${Object.entries(groups).map(([g,items]) => `<optgroup label="${g}">${items.map(([id,l]) => `<option value="${id}" ${st.s===id?'selected':''}>${l}</option>`).join('')}</optgroup>`).join('')}</select>`;
+  $('#pick').addEventListener('change', e => go(e.target.value));
+  $('#frame').innerHTML = screen(st.s);
+  $('#note').innerHTML = (NOTES[st.s] ? NOTES[st.s](PLAT[st.p]) : '') + (st.p === 'linux' ? ' <b>Linux is coming soon;</b> same app, GNOME-style window, no tray.' : '');
+  writeHash(); wire();
+}
+function go(s) {
+  if (!screensFor(st.p).some(x => x[1] === s)) s = 'devices';
+  if (s === 'g-search' && !st.q) st.q = 'scan';
+  st.s = s; render();
+}
+function wire() {
+  clearInterval(timer);
+  if (st.s === 'g-transfers' && !st.bare) timer = setInterval(tick, 600);
+  const q = $('#q');
+  if (q) {
+    if (st.s === 'g-search') { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+    q.addEventListener('input', () => { st.q = q.value; go(q.value.trim() ? 'g-search' : 'g-browse'); });
+  }
+  const wi = $('#wordin'); if (wi) wireCode(wi);
+}
+function tick() {
+  let changed = false;
+  xfersFor(st.p).forEach(x => {
+    if (x.state !== 'active') return;
+    x.got = Math.min(x.size, x.got + parseFloat(x.speed) * 0.6);
+    if (x.got >= x.size) { x.state = 'done'; x.got = null; changed = true; return; }
+    const pct = Math.round(x.got / x.size * 100);
+    const b = document.querySelector(`[data-b="${x.id}"]`); if (b) b.style.width = pct + '%';
+    const p = document.querySelector(`[data-p="${x.id}"]`); if (p) p.textContent = pct + '%';
+    const m = document.querySelector(`[data-m="${x.id}"]`); if (m) m.textContent = `${fmtGot(x)} of ${fmt(x)} · ${x.speed} · ${eta(x)}`;
+  });
+  if (changed) render();
+}
+
+/* ---------- Code input with word autocompletion ---------- */
+function wireCode(root) {
+  const ins = [...root.querySelectorAll('input')];
+  const matches = v => v.length < 2 ? [] : WORDS.filter(w => w.startsWith(v) && w !== v).slice(0, 4);
+  const paint = (i, showList) => {
+    const inp = ins[i], v = inp.value.trim().toLowerCase(), box = inp.parentElement, m = matches(v);
+    root.querySelectorAll('.sugg').forEach(n => n.remove());
+    box.querySelector('.ghost').textContent = (m[0] && document.activeElement === inp) ? ' '.repeat(v.length) + m[0].slice(v.length) : '';
+    box.classList.toggle('unknown', !!v && !WORDS.includes(v) && !m.length);
+    if (showList && m.length && document.activeElement === inp) {
+      const d = document.createElement('div'); d.className = 'sugg';
+      d.innerHTML = m.map(w => `<button type="button" tabindex="-1" data-word="${w}">${w}</button>`).join('');
+      d.addEventListener('mousedown', e => { const b = e.target.closest('[data-word]'); if (!b) return; e.preventDefault(); accept(i, b.dataset.word); });
+      box.appendChild(d);
+    }
+  };
+  const accept = (i, w) => { ins[i].value = w; st.code[i] = w; paint(i, false); if (ins[i+1]) ins[i+1].focus(); else root.querySelectorAll('.sugg').forEach(n => n.remove()); };
+  const fill = (start, words) => { words.forEach((w, k) => { if (ins[start+k]) { ins[start+k].value = w; st.code[start+k] = w; } }); (ins[Math.min(3, start + words.length)] || ins[3]).focus(); ins.forEach((_, k) => paint(k, false)); };
+  ins.forEach((inp, i) => {
+    inp.addEventListener('focus', () => paint(i, true));
+    inp.addEventListener('blur', () => setTimeout(() => paint(i, false), 0));
+    inp.addEventListener('input', () => {
+      inp.parentElement.classList.remove('bad');
+      const raw = inp.value.toLowerCase();
+      if (/[\s\-·.,]/.test(raw)) {
+        const parts = raw.split(/[\s\-·.,]+/).filter(Boolean);
+        if (parts.length > 1) { fill(i, parts); return; }
+        if (parts[0]) { const m = matches(parts[0]); accept(i, WORDS.includes(parts[0]) ? parts[0] : (m[0] || parts[0])); return; }
+        inp.value = ''; return;
+      }
+      st.code[i] = inp.value.trim().toLowerCase(); paint(i, true);
+    });
+    inp.addEventListener('paste', e => {
+      const parts = (e.clipboardData || window.clipboardData).getData('text').toLowerCase().split(/[^a-z]+/).filter(Boolean);
+      if (parts.length > 1) { e.preventDefault(); fill(i, parts); }
+    });
+    inp.addEventListener('keydown', e => {
+      const m = matches(inp.value.trim().toLowerCase());
+      if (((e.key === 'Tab' && !e.shiftKey) || e.key === 'Enter') && m[0]) { e.preventDefault(); accept(i, m[0]); }
+      else if (e.key === 'Enter') { e.preventDefault(); doPair(); }
+      else if (e.key === 'Backspace' && !inp.value && ins[i-1]) { e.preventDefault(); ins[i-1].focus(); }
+    });
+  });
+  const firstEmpty = st.code.findIndex(w => !WORDS.includes(w));
+  if (st.s === 'g-code' && firstEmpty >= 0) { const el = ins[firstEmpty]; el.focus(); el.setSelectionRange(el.value.length, el.value.length); paint(firstEmpty, true); }
+}
+function doPair() {
+  if (st.code.map(w => w.trim().toLowerCase()).join('-') === CODE.join('-')) { st.attempts = 3; go('g-paired'); return; }
+  st.attempts -= 1;
+  if (st.attempts <= 0) { st.attempts = 3; st.code = ['otter','plaza','cru','']; go('g-burned'); return; }
+  st.s = 'g-code-wrong'; render();
+}
+
+/* ---------- Events ---------- */
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-plat],[data-theme-set],[data-go],[data-act]');
+  if (!t || t.disabled) return;
+  if (t.dataset.plat) { st.p = t.dataset.plat; st.sel = null; if (!screensFor(st.p).some(x => x[1] === st.s)) st.s = 'g-browse'; render(); return; }
+  if (t.dataset.themeSet) { st.t = t.dataset.themeSet; render(); return; }
+  if (t.dataset.go) { go(t.dataset.go); return; }
+  const a = t.dataset.act;
+  if (a === 'pair') doPair();
+  else if (a === 'open') { st.path[st.p] = t.dataset.path; st.q = ''; go('g-browse'); }
+  else if (a === 'sel') { st.sel = t.dataset.name; document.querySelectorAll('tr.sel').forEach(r => r.classList.remove('sel')); t.classList.add('sel'); }
+  else if (a === 'get') {
+    e.stopPropagation();
+    const name = t.dataset.name, sz = t.dataset.size, n = parseFloat(sz), kb = /KB/.test(sz), size = /GB/.test(sz) ? n * 1000 : n;
+    const list = xfersFor(st.p), exists = list.some(x => x.name === name);
+    list.unshift(kb || size < 5
+      ? { id: 'n' + Date.now(), name, size: n, unit: kb ? 'KB' : 'MB', state: 'done', route: 'direct', savedAs: exists ? name.replace(/(\.[^.]+)$/, ' (1)$1') : null }
+      : { id: 'n' + Date.now(), name, size, unit: 'MB', got: 0, speed: '11.4 MB/s', route: 'direct', state: 'active' });
+    go('g-transfers');
+  }
+  else if (a === 'toggle') t.setAttribute('aria-checked', t.getAttribute('aria-checked') !== 'true');
+  else if (a === 'copy') { try { navigator.clipboard.writeText(LINK); } catch (_) {} t.querySelector('.lbl').textContent = 'Copied'; }
+});
+window.addEventListener('hashchange', () => { readHash(); render(); });
+readHash(); render();
+})();
+</script>
+</body>
+</html>
