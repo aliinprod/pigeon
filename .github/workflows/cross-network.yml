@@ -12,6 +12,9 @@ name: cross-network
 # The artifact holds the invite link and its 4-word code. The code is
 # single use and expires in 12 h; it only lives in this private repo's
 # artifacts (1-day retention) and is masked in every log.
+# CHECKLIST before making the repository public (W-10, THREAT_MODEL R12):
+# anyone could then download the artifact and race this job; generate the
+# code differently or shorten the window first.
 
 on:
   workflow_dispatch:
