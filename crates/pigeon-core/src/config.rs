@@ -352,12 +352,30 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, path).with_context(|| format!("could not replace {}", path.display()))
+        rename_replacing(&tmp, path)
+            .with_context(|| format!("could not replace {}", path.display()))
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
     result
+}
+
+/// `rename(from, to)`, replacing `to`. On Windows, replacing fails with
+/// ERROR_ACCESS_DENIED (5) or ERROR_SHARING_VIOLATION (32) while another
+/// program (an antivirus scanner, the search indexer, a reader without
+/// delete sharing) briefly has `to` open; retry for up to about 1 s.
+fn rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32)) && tries < 50 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
 }
 
 /// Test helper: fails if any file under `dir` contains one of `needles`.
