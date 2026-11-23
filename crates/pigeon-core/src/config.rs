@@ -194,6 +194,61 @@ mod winacl {
         result
     }
 
+    /// The DACL of `path` as an SDDL string (`D:...`), for tests.
+    #[cfg(test)]
+    pub fn dacl_sddl(path: &Path) -> Result<String> {
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+        };
+        let wpath = wide(path.as_os_str());
+        let mut sd: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: `wpath` is NUL-terminated; the out-pointers are valid; on
+        // success `sd` is LocalAlloc'd and freed below (the DACL pointer we
+        // do not ask for points into it).
+        let err = unsafe {
+            GetNamedSecurityInfoW(
+                wpath.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut sd,
+            )
+        };
+        if err != 0 {
+            bail!("GetNamedSecurityInfoW failed (error {err})");
+        }
+        let mut text: *mut u16 = null_mut();
+        // SAFETY: `sd` is valid until LocalFree; `text` is a valid out-pointer.
+        let ok = unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                sd,
+                SDDL_REVISION_1,
+                DACL_SECURITY_INFORMATION,
+                &mut text,
+                null_mut(),
+            )
+        };
+        // SAFETY: `sd` came from GetNamedSecurityInfoW; freed once.
+        unsafe { LocalFree(sd) };
+        if ok == 0 {
+            bail!("could not convert the security descriptor");
+        }
+        // SAFETY: `text` is a NUL-terminated LocalAlloc'd UTF-16 string.
+        let s = unsafe {
+            let mut n = 0;
+            while *text.add(n) != 0 {
+                n += 1;
+            }
+            let s = String::from_utf16_lossy(std::slice::from_raw_parts(text, n));
+            LocalFree(text.cast());
+            s
+        };
+        Ok(s)
+    }
+
     pub fn restrict_to_current_user(dir: &Path) -> Result<()> {
         let sid = current_user_sid()?;
         anyhow::ensure!(
@@ -373,12 +428,9 @@ mod tests {
         write_private(&file, b"{}").unwrap();
         let me = current_user_sid().unwrap();
         for (path, must_be_protected) in [(&home, true), (&file, false)] {
-            let out = std::process::Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command"])
-                .arg(format!("(Get-Acl -LiteralPath '{}').Sddl", path.display()))
-                .output()
-                .unwrap();
-            let sddl = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            // Read through the Win32 API: PowerShell's Get-Acl is not
+            // reliable on CI runners (module loading with pwsh's PSModulePath).
+            let sddl = winacl::dacl_sddl(path).unwrap();
             let dacl = &sddl[sddl.find("D:").expect(&sddl)..];
             if must_be_protected {
                 assert!(dacl.starts_with("D:P"), "not protected: {sddl}");
