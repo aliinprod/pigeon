@@ -260,11 +260,12 @@ impl Agent {
     /// with the active invite's ID keeps the in-memory attempt count.
     pub fn offer_invite(&self, invite: Invite) {
         let now = pair::now_secs();
+        // Lock order everywhere: `invite`, then `spent` (see `clear_invite`).
+        let mut current = self.inner.invite.lock().expect("invite poisoned");
         let mut spent = self.inner.spent.lock().expect("spent poisoned");
         if spent.contains(&invite.invite_id) {
             return;
         }
-        let mut current = self.inner.invite.lock().expect("invite poisoned");
         if let Some(cur) = current.as_ref() {
             if cur.invite_id == invite.invite_id {
                 return;
@@ -288,7 +289,8 @@ impl Agent {
         self.inner.endpoint.set_alpns(alpns);
     }
 
-    /// Drops the active invite (used, burned or expired).
+    /// Drops the active invite (used, burned or expired). The caller holds
+    /// the `invite` lock; this takes `spent` after it.
     fn clear_invite(&self, current: &mut Option<Invite>) {
         if let Some(old) = current.take() {
             self.inner
