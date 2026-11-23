@@ -1,67 +1,201 @@
-//! `pigeon`: fetch files from a Pigeon agent.
+//! `pigeon`: fetch files from a paired Pigeon agent.
 //!
-//! - `pigeon ls <TICKET> [PATH]`
-//! - `pigeon get <TICKET> <PATH> [-o OUT]`
+//! - `pigeon pair <INVITE-LINK> [--name NAME]`: pair once with an agent; asks
+//!   for the 4-word code shown on the agent's screen.
+//! - `pigeon ls [PATH]`, `pigeon get <PATH> [-o OUT]`: use the paired agent
+//!   (`--agent NAME` if there are several). No ticket, nothing secret on the
+//!   command line: this device is recognised by its key.
+//! - `pigeon agents`, `pigeon forget <NAME>`.
 //!
-//! `--relay-only` disables direct (UDP hole-punched) paths, so every byte goes
-//! through the relay. Useful for testing the fallback path.
+//! The pairing code is a secret, so it is never a command-line argument
+//! (shell history, process list, clap error echo; TH-14). It is read from
+//! `--code-file FILE`, the `PIGEON_PAIR_CODE` environment variable, or typed
+//! at the prompt, in that order.
+//!
+//! `ls --relay-only` / `get --relay-only` disable direct (UDP hole-punched)
+//! paths, so every byte goes through the relay. Useful for testing the
+//! fallback path.
 
-use std::path::PathBuf;
+use std::{
+    io::{BufRead, IsTerminal, Write},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::{Endpoint, endpoint::presets};
-use pigeon_core::{Ticket, client};
+use pigeon_core::{
+    client,
+    config::Home,
+    devices::{AGENTS_FILE, AgentList, PairedAgent, trusted_relay_hint},
+    display_safe, fingerprint,
+    keystore::CLIENT_KEY,
+    pair::{self, InviteLink, PairingCode},
+};
+use zeroize::Zeroizing;
+
+/// Environment variable that may hold the pairing code.
+const CODE_ENV: &str = "PIGEON_PAIR_CODE";
 
 #[derive(Parser)]
 #[command(name = "pigeon", version, about = "Your files know the way home.")]
 struct Cli {
-    /// Never use a direct connection; send everything through the relay.
-    #[arg(long, global = true)]
-    relay_only: bool,
+    /// Show the full chain of causes when something fails.
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Pair this device with an agent, using the invite link from
+    /// `pigeon-agent pair` and the code shown on the agent's screen.
+    Pair {
+        /// The invite link (`pigeon-invite-...`). Not secret.
+        link: InviteLink,
+        /// What to call this agent here, e.g. "Office Mac".
+        #[arg(long)]
+        name: Option<String>,
+        /// Read the pairing code from this file (otherwise $PIGEON_PAIR_CODE,
+        /// otherwise you are asked to type it).
+        #[arg(long, value_name = "FILE")]
+        code_file: Option<PathBuf>,
+    },
     /// List a folder on the agent.
     Ls {
-        ticket: Ticket,
+        /// Folder inside the share, with `/` between parts ("" = the top).
         #[arg(default_value = "")]
         path: String,
+        /// Which paired agent (name or fingerprint), if there are several.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Never use a direct connection; send everything through the relay.
+        #[arg(long)]
+        relay_only: bool,
     },
     /// Download one file (resumes from OUT.part if present). Never overwrites:
     /// if OUT exists, saves as "OUT (1)", "OUT (2)", ...
     Get {
-        ticket: Ticket,
+        /// File inside the share, with `/` between parts, as `ls` shows it.
         path: String,
         /// Output file (default: the file name from PATH, in the current folder).
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Which paired agent (name or fingerprint), if there are several.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Never use a direct connection; send everything through the relay.
+        #[arg(long)]
+        relay_only: bool,
+    },
+    /// List the agents this device is paired with.
+    Agents,
+    /// Forget an agent on this device. To cut this device off on the agent
+    /// as well, run `pigeon-agent revoke` there.
+    Forget {
+        /// Agent name or fingerprint, as shown by `pigeon agents`.
+        agent: String,
     },
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
-    let mut builder = Endpoint::builder(presets::N0);
-    if cli.relay_only {
+    let verbose = cli.verbose;
+    match real_main(cli).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{}", render_error(&e, verbose));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// N3: by default one line plus the root cause (once); `-v` shows every cause.
+fn render_error(e: &anyhow::Error, verbose: bool) -> String {
+    if verbose {
+        return format!("Error: {e:?}");
+    }
+    let top = e.to_string();
+    let root = e.root_cause().to_string();
+    if e.chain().count() > 1 && root != top {
+        format!("Error: {top}\n  cause: {root}\n  (run with -v for details)")
+    } else {
+        format!("Error: {top}")
+    }
+}
+
+async fn real_main(cli: Cli) -> Result<()> {
+    let home = Home::from_env()?;
+    let agents_path = home.dir.join(AGENTS_FILE);
+    match cli.command {
+        Command::Agents => return agents_cmd(&agents_path),
+        Command::Forget { agent } => return forget_cmd(&agents_path, &agent),
+        _ => {}
+    }
+
+    // Read the code before going online, so a typo fails fast and locally.
+    let code = match &cli.command {
+        Command::Pair { code_file, .. } => Some(PairingCode::parse(&read_secret(
+            "pairing code",
+            code_file.as_deref(),
+            CODE_ENV,
+        )?)?),
+        _ => None,
+    };
+    let relay_only = matches!(
+        cli.command,
+        Command::Ls {
+            relay_only: true,
+            ..
+        } | Command::Get {
+            relay_only: true,
+            ..
+        }
+    );
+
+    // A stable device identity: the agent's allow-list holds its public key.
+    let (key, _store, _created) = home.device_key(CLIENT_KEY)?;
+    let mut builder = Endpoint::builder(presets::N0).secret_key(key);
+    if relay_only {
         builder = builder.clear_ip_transports();
     }
     let endpoint = builder.bind().await?;
-    let result = run(&endpoint, cli.command, cli.relay_only).await;
+    let result = run(&endpoint, &agents_path, cli.command, code).await;
     endpoint.close().await;
     result
 }
 
-/// In relay-only mode, drop the agent's direct addresses from the ticket so
-/// we only ever dial its relay.
-fn prepare(mut ticket: Ticket, relay_only: bool) -> Ticket {
-    if relay_only {
-        ticket.addr.addrs.retain(|a| a.is_relay());
-    }
-    ticket
+/// Reads a secret (`what`) from `file`, else the environment variable `env`,
+/// else one line on stdin (with a prompt on a terminal). The value is never
+/// echoed in errors, and every copy we make is zeroed when dropped (W-7).
+fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<Zeroizing<String>> {
+    let text = Zeroizing::new(if let Some(file) = file {
+        std::fs::read_to_string(file)
+            .with_context(|| format!("could not read the {what} from {}", file.display()))?
+    } else if let Ok(v) = std::env::var(env) {
+        v
+    } else {
+        let stdin = std::io::stdin();
+        if stdin.is_terminal() {
+            eprint!("Type the {what} shown on the agent and press Enter: ");
+            std::io::stderr().flush()?;
+        }
+        let mut line = Zeroizing::new(String::new());
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .with_context(|| format!("could not read the {what} from stdin"))?;
+        std::mem::take(&mut *line)
+    });
+    let text = Zeroizing::new(text.trim().to_string());
+    anyhow::ensure!(
+        !text.is_empty(),
+        "no {what} given: type it at the prompt, or use --code-file FILE or ${env}"
+    );
+    Ok(text)
 }
 
 /// Local file name for a remote PATH when no `-o` is given: its last
@@ -104,25 +238,62 @@ fn default_out(path: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(safe))
 }
 
-async fn run(endpoint: &Endpoint, command: Command, relay_only: bool) -> Result<()> {
+async fn run(
+    endpoint: &Endpoint,
+    agents_path: &Path,
+    command: Command,
+    code: Option<PairingCode>,
+) -> Result<()> {
     match command {
-        Command::Ls { ticket, path } => {
-            let ticket = prepare(ticket, relay_only);
-            for e in client::list(endpoint, &ticket, &path).await? {
+        Command::Pair { link, name, .. } => {
+            let code = code.context("no pairing code")?;
+            let paired = pair::pair(endpoint, &link, &code).await?;
+            let fp = fingerprint(&paired.agent);
+            let agent = PairedAgent {
+                id: paired.agent,
+                name: name
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| format!("agent {fp}")),
+                // W-6: keep only a default (n0) relay as a hint.
+                relay_url: trusted_relay_hint(link.addr.relay_urls().next()),
+                paired_at: pair::now_secs(),
+            };
+            let mut list = AgentList::load(agents_path)?;
+            list.upsert(agent.clone());
+            list.save(agents_path)?;
+            println!(
+                "paired with {} (fingerprint {fp}). Try `pigeon ls`.",
+                display_safe(&agent.name)
+            );
+            println!(
+                "this device's fingerprint is {}; the agent lists it in `pigeon-agent devices`.",
+                fingerprint(&endpoint.id())
+            );
+        }
+        Command::Ls { path, agent, .. } => {
+            let agent = AgentList::load(agents_path)?
+                .pick(agent.as_deref())?
+                .clone();
+            for e in client::list(endpoint, &agent.dial_addr(), &path).await? {
                 let kind = if e.is_dir { "dir " } else { "file" };
                 // Names come from the agent: never let them drive the terminal.
-                let name = pigeon_core::display_safe(&e.name);
+                let name = display_safe(&e.name);
                 println!("{kind}  {:>14}  {:>10}  {name}", e.size, e.mtime);
             }
         }
-        Command::Get { ticket, path, out } => {
-            let ticket = prepare(ticket, relay_only);
+        Command::Get {
+            path, out, agent, ..
+        } => {
+            let agent = AgentList::load(agents_path)?
+                .pick(agent.as_deref())?
+                .clone();
             let out = match out {
                 Some(out) => out,
                 None => default_out(&path)?,
             };
             let out = client::free_path(&out);
-            let stats = client::get(endpoint, &ticket, &path, &out).await?;
+            let stats = client::get(endpoint, &agent.dial_addr(), &path, &out).await?;
             if stats.resumed_from > 0 {
                 println!("resumed from byte {}", stats.resumed_from);
             }
@@ -136,34 +307,120 @@ async fn run(endpoint: &Endpoint, command: Command, relay_only: bool) -> Result<
                 stats.sha256
             );
         }
+        Command::Agents | Command::Forget { .. } => unreachable!("handled before going online"),
     }
+    Ok(())
+}
+
+fn agents_cmd(path: &Path) -> Result<()> {
+    let list = AgentList::load(path)?;
+    if list.agents.is_empty() {
+        println!("not paired with any agent yet: run `pigeon pair <INVITE-LINK>`");
+    }
+    for a in &list.agents {
+        println!("{}  {}", fingerprint(&a.id), display_safe(&a.name));
+    }
+    Ok(())
+}
+
+fn forget_cmd(path: &Path, query: &str) -> Result<()> {
+    let mut list = AgentList::load(path)?;
+    let gone = list.remove(query)?;
+    list.save(path)?;
+    println!(
+        "forgot {} ({}). To cut it off on the agent side too, run `pigeon-agent revoke` there.",
+        display_safe(&gone.name),
+        fingerprint(&gone.id)
+    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iroh::{EndpointAddr, RelayUrl, SecretKey};
 
     #[test]
-    fn relay_only_drops_direct_addresses_from_the_ticket() {
-        let relay: RelayUrl = "https://relay.example.com".parse().unwrap();
-        let addr = EndpointAddr::new(SecretKey::generate().public())
-            .with_relay_url(relay.clone())
-            .with_ip_addr("192.0.2.1:4433".parse().unwrap())
-            .with_ip_addr("[2001:db8::1]:4433".parse().unwrap());
-        let ticket = Ticket {
-            addr,
-            token: [7; 32],
-        };
+    fn code_is_read_from_a_file_and_never_echoed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("code.txt");
+        std::fs::write(&file, "  Acid ACORN acre-zoom \r\n").unwrap();
+        let text = read_secret("pairing code", Some(&file), "PIGEON_TEST_UNSET_VAR").unwrap();
+        assert_eq!(
+            PairingCode::parse(&text).unwrap().reveal(),
+            "acid-acorn-acre-zoom"
+        );
+        // A code with a typo must not show up in the error.
+        std::fs::write(&file, "acid acorn acre zzsecretzz").unwrap();
+        let text = read_secret("pairing code", Some(&file), "X").unwrap();
+        let err = format!("{:#}", PairingCode::parse(&text).unwrap_err());
+        assert!(!err.contains("zzsecretzz"), "{err}");
+        // A missing file names the file, not any secret.
+        let err = read_secret("pairing code", Some(&dir.path().join("nope")), "X").unwrap_err();
+        assert!(format!("{err:#}").contains("could not read the pairing code"));
+    }
 
-        let kept = prepare(ticket.clone(), false);
-        assert_eq!(kept.addr.addrs.len(), 3);
+    #[test]
+    fn secrets_are_not_command_line_arguments() {
+        // Only the (non-secret) link is an argument; the code has no flag that
+        // takes its value, and `ls`/`get` take no ticket any more.
+        let link = pigeon_core::pair::InviteLink {
+            addr: iroh::EndpointAddr::new(iroh::SecretKey::from_bytes(&[1; 32]).public()),
+            invite_id: [0; 16],
+            expires_at: 0,
+        }
+        .to_string();
+        let cli = Cli::try_parse_from(["pigeon", "pair", &link, "--code-file", "c.txt"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Pair {
+                code_file: Some(_),
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(["pigeon", "pair", &link, "--code", "acid"]).is_err());
+        let cli = Cli::try_parse_from(["pigeon", "ls", "pigeonabc"]).unwrap();
+        assert!(matches!(cli.command, Command::Ls { path, .. } if path == "pigeonabc"));
+        // A bad link is reported without echoing it back.
+        let err = Cli::try_parse_from(["pigeon", "pair", "pigeon-invite-zzsecretzz"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("invite link"), "{err}");
+    }
 
-        let relayed = prepare(ticket, true);
-        assert_eq!(relayed.addr.addrs.len(), 1);
-        assert!(relayed.addr.addrs.iter().all(|a| a.is_relay()));
-        assert_eq!(relayed.token, [7; 32]);
+    /// N7: `--relay-only` exists only where it does something.
+    #[test]
+    fn relay_only_is_only_on_ls_and_get() {
+        let cli = Cli::try_parse_from(["pigeon", "get", "a.txt", "--relay-only"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Get {
+                relay_only: true,
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(["pigeon", "ls", "--relay-only"]).is_ok());
+        assert!(Cli::try_parse_from(["pigeon", "agents", "--relay-only"]).is_err());
+        assert!(Cli::try_parse_from(["pigeon", "forget", "x", "--relay-only"]).is_err());
+    }
+
+    /// N3: one friendly line plus the root cause by default; everything with -v.
+    #[test]
+    fn errors_are_short_unless_verbose() {
+        let e = anyhow::anyhow!("error 120: peer doesn't support any known protocol")
+            .context("aborted by peer")
+            .context("could not pair: make a new invite");
+        let short = render_error(&e, false);
+        assert!(short.starts_with("Error: could not pair"), "{short}");
+        assert_eq!(short.matches("error 120").count(), 1, "{short}");
+        assert!(!short.contains("aborted by peer"), "{short}");
+        let long = render_error(&e, true);
+        assert!(
+            long.contains("aborted by peer") && long.contains("Caused by"),
+            "{long}"
+        );
+        let single = render_error(&anyhow::anyhow!("not paired"), false);
+        assert_eq!(single, "Error: not paired");
     }
 
     #[test]

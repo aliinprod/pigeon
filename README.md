@@ -26,14 +26,28 @@ Early builds are unsigned and come from GitHub Actions (repo access needed).
    xattr -d com.apple.quarantine pigeon-agent pigeon
    ./pigeon-agent share ~/Documents/ForHome
    ```
-   It prints a `ticket: pigeon...` line. Keep the agent running, and treat the ticket like a password: anyone with it can read that folder.
-3. **On Windows**, list and fetch:
+   Keep it running. The first start creates the Mac's device key in your login Keychain (macOS may ask you to allow access; choose "Always Allow").
+3. **Pair the home PC (once).** In a second Mac terminal:
+   ```sh
+   ./pigeon-agent pair --name "Home PC"
+   ```
+   It prints an **invite link** (`pigeon-invite-...`, not secret: you may email it to yourself) and a **4-word code** like `otter-plaza-crumb-tulip`. The code is the secret: write it down or take a photo of the screen, never send it. The invite works once, for 12 hours, and dies after 3 wrong codes.
+4. **On Windows**, pair with the link and type the code when asked:
    ```powershell
-   .\pigeon.exe ls <TICKET>
-   .\pigeon.exe get <TICKET> report.pdf
+   .\pigeon.exe pair pigeon-invite-... --name "Office Mac"
+   ```
+   Both sides show each other's fingerprint. From now on no ticket or code is needed: the Mac recognises this PC by its key (kept in Windows Credential Manager).
+5. **List and fetch:**
+   ```powershell
+   .\pigeon.exe ls
+   .\pigeon.exe get report.pdf
    ```
    `get` resumes an interrupted download, checks the SHA-256, and never overwrites: if `report.pdf` exists it saves `report (1).pdf` and prints the final path.
-   Add `--relay-only` to force the encrypted relay path (slower; for testing).
+   Add `--relay-only` to `ls` or `get` to force the encrypted relay path (slower; for testing). Add `-v` to see the full error details if something fails.
+
+**Lost the PC, or done with it?** On the Mac: `./pigeon-agent devices` lists paired devices and `./pigeon-agent revoke "Home PC"` cuts one off at once (a running agent drops its connections within a second). `./pigeon-agent reset --yes` makes a new Mac key and forgets every pairing (restart a running `share` afterwards, then pair again).
+
+The Day-1 "ticket" is gone: anyone who ever saw one can no longer use it.
 
 ## Roadmap
 See [ROADMAP.md](ROADMAP.md). Daily progress: [DEVLOG.md](DEVLOG.md).

@@ -2,22 +2,17 @@
 # Fetches one file with the pigeon CLI, checks its SHA-256 against the value
 # the agent side recorded, and reports size / time / speed / route.
 #
-# Usage: transfer-check.sh PIGEON TICKET_FILE SHA_FILE REMOTE_PATH MODE
+# Usage: transfer-check.sh PIGEON SHA_FILE REMOTE_PATH MODE
 #   MODE: "auto" (direct if hole punching works, else relay) or "relay-only"
 #         (fails unless the bytes really went through the relay).
-# The ticket is read from a file and masked; it is never printed.
+# The client must already be paired (`pigeon pair`); no secret is involved.
 set -euo pipefail
 
 pigeon=$1
-ticket_file=$2
-sha_file=$3
-remote=$4
-mode=$5
+sha_file=$2
+remote=$3
+mode=$4
 
-ticket=$(tr -d '\r\n' <"$ticket_file")
-if [ -n "${GITHUB_ACTIONS:-}" ]; then
-  echo "::add-mask::$ticket"
-fi
 expected=$(tr -d '\r\n ' <"$sha_file")
 
 flags=()
@@ -43,7 +38,7 @@ rm -f "$out" "$out.part"
 log="$mode.log"
 
 start=$(date +%s%N)
-"$pigeon" ${flags[@]+"${flags[@]}"} get "$ticket" "$remote" -o "$out" | tee "$log"
+"$pigeon" get ${flags[@]+"${flags[@]}"} "$remote" -o "$out" | tee "$log"
 end=$(date +%s%N)
 
 actual=$(sha256 "$out")
