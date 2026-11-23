@@ -1,0 +1,13 @@
+Pigeon
+Copyright the Pigeon contributors. Licensed MIT OR Apache-2.0.
+
+This product includes the EFF Short Wordlist #1
+(crates/pigeon-core/src/eff_short_wordlist_1.txt), by the Electronic
+Frontier Foundation, https://www.eff.org/dice, licensed under the Creative
+Commons Attribution 3.0 United States License (CC BY 3.0 US),
+https://creativecommons.org/licenses/by/3.0/us/.
+Changes: dice numbers removed (one word per line), and the word "yo-yo"
+removed ("-" separates the words of a pairing code, and "yoyo" is already in
+the list). 1295 words remain.
+Source file SHA-256 (eff_short_wordlist_1.txt as published):
+8f5ca830b8bffb6fe39c9736c024a00a6a6411adb3f83a9be8bfeeb6e067ae69

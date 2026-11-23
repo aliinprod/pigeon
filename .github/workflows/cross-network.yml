@@ -3,11 +3,14 @@ name: cross-network
 # A real transfer between two machines on two different networks:
 # the agent runs on a GitHub macOS runner, the client on a Windows runner.
 #
-# Ticket hand-off between the two parallel jobs:
-#   agent  --upload-artifact--> pigeon-ticket-<attempt>      --poll REST API--> client
+# Pairing hand-off between the two parallel jobs (the real user flow:
+# `pigeon-agent pair` on the Mac, `pigeon pair` on Windows, then ls/get with
+# no ticket):
+#   agent  --upload-artifact--> pigeon-invite-<attempt>      --poll REST API--> client
 #   client --upload-artifact--> pigeon-client-done-<attempt> --poll REST API--> agent
 # (v4 artifacts are listed by the API as soon as their upload step finishes.)
-# The ticket holds an access token: it only lives in this private repo's
+# The artifact holds the invite link and its 4-word code. The code is
+# single use and expires in 12 h; it only lives in this private repo's
 # artifacts (1-day retention) and is masked in every log.
 
 on:
@@ -41,7 +44,7 @@ env:
   SIZE_MIB: ${{ inputs.size_mib || '10' }}
   # The public relay was measured at ~30 KB/s, so keep the relay-only file small.
   RELAY_MIB: ${{ inputs.relay_mib || '1' }}
-  TICKET_ARTIFACT: pigeon-ticket-${{ github.run_attempt }}
+  INVITE_ARTIFACT: pigeon-invite-${{ github.run_attempt }}
   DONE_ARTIFACT: pigeon-client-done-${{ github.run_attempt }}
 
 jobs:
@@ -80,29 +83,39 @@ jobs:
           shasum -a 256 "$RUNNER_TEMP/share/relay.bin" | cut -d' ' -f1 >"$RUNNER_TEMP/handoff/relay.sha256"
           ls -l "$RUNNER_TEMP/share"
           cat "$RUNNER_TEMP/handoff/"*.sha256
-      - name: start agent
+      - name: start agent and create a pairing invite
         run: |
-          # stdout carries the ticket: keep it in a file, never in the log.
+          # The agent key goes to the runner's login Keychain (real keystore).
           nohup target/release/pigeon-agent share "$RUNNER_TEMP/share" \
             >"$RUNNER_TEMP/agent.out" 2>"$RUNNER_TEMP/agent.err" &
           echo $! >"$RUNNER_TEMP/agent.pid"
           for _ in $(seq 60); do
-            grep -q '^ticket: ' "$RUNNER_TEMP/agent.out" && break
+            grep -q '^sharing ' "$RUNNER_TEMP/agent.err" && break
             sleep 1
           done
-          ticket=$(sed -n 's/^ticket: //p' "$RUNNER_TEMP/agent.out")
-          if [ -z "$ticket" ]; then
-            echo "::error::agent printed no ticket"
+          if ! grep -q '^sharing ' "$RUNNER_TEMP/agent.err"; then
+            echo "::error::agent did not start"
             cat "$RUNNER_TEMP/agent.err"
             exit 1
           fi
-          echo "::add-mask::$ticket"
-          printf '%s\n' "$ticket" >"$RUNNER_TEMP/handoff/ticket"
+          # stdout carries the link and the code: files only, never the log.
+          target/release/pigeon-agent pair --name "CI Windows runner" \
+            >"$RUNNER_TEMP/pair.out" 2>"$RUNNER_TEMP/pair.err"
+          sed -n 's/^link: //p' "$RUNNER_TEMP/pair.out" >"$RUNNER_TEMP/handoff/link"
+          code=$(sed -n 's/^code: //p' "$RUNNER_TEMP/pair.out")
+          if [ -z "$code" ] || [ ! -s "$RUNNER_TEMP/handoff/link" ]; then
+            echo "::error::pigeon-agent pair printed no invite"
+            cat "$RUNNER_TEMP/pair.err"
+            exit 1
+          fi
+          echo "::add-mask::$code"
+          printf '%s\n' "$code" >"$RUNNER_TEMP/handoff/code"
+          rm -f "$RUNNER_TEMP/pair.out"
           cat "$RUNNER_TEMP/agent.err"
-      - name: publish ticket
+      - name: publish invite
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ env.TICKET_ARTIFACT }}
+          name: ${{ env.INVITE_ARTIFACT }}
           path: ${{ runner.temp }}/handoff/
           retention-days: 1
           if-no-files-found: error
@@ -142,16 +155,22 @@ jobs:
           key: release
       - name: build
         run: cargo build --release --locked -p pigeon-cli
-      - name: get ticket
+      - name: get invite
         run: |
-          bash .github/scripts/wait-artifact.sh "$TICKET_ARTIFACT" "$RUNNER_TEMP/handoff" 1800
-          echo "::add-mask::$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/ticket")"
+          bash .github/scripts/wait-artifact.sh "$INVITE_ARTIFACT" "$RUNNER_TEMP/handoff" 1800
+          echo "::add-mask::$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/code")"
+      - name: pigeon pair
+        run: |
+          # The code comes from a file, never an argument (TH-14). The client
+          # key goes to Windows Credential Manager (real keystore).
+          link=$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/link")
+          target/release/pigeon.exe pair "$link" --name "CI macOS runner" \
+            --code-file "$RUNNER_TEMP/handoff/code"
+          target/release/pigeon.exe agents
       - name: pigeon ls
         run: |
-          ticket=$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/ticket")
-          echo "::add-mask::$ticket"
-          # Via the environment, never as an argument (TH-14).
-          PIGEON_TICKET="$ticket" target/release/pigeon.exe ls
+          # No ticket any more: the agent knows this device by its key.
+          target/release/pigeon.exe ls
           {
             echo "### Cross-network transfer (agent: macOS runner, client: Windows runner)"
             echo
@@ -163,7 +182,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/transfer-check.sh" \
-            "$GITHUB_WORKSPACE/target/release/pigeon.exe" handoff/ticket handoff/random.sha256 \
+            "$GITHUB_WORKSPACE/target/release/pigeon.exe" handoff/random.sha256 \
             random.bin auto
       - name: pigeon get --relay-only
         if: success() || failure()
@@ -171,7 +190,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/transfer-check.sh" \
-            "$GITHUB_WORKSPACE/target/release/pigeon.exe" handoff/ticket handoff/relay.sha256 \
+            "$GITHUB_WORKSPACE/target/release/pigeon.exe" handoff/relay.sha256 \
             relay.bin relay-only
       - name: write done marker
         if: always()

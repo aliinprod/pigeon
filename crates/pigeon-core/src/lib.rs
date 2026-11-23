@@ -8,15 +8,19 @@
 pub mod agent;
 pub mod client;
 pub mod config;
+pub mod devices;
 pub mod guard;
 pub mod keystore;
+pub mod pair;
 pub mod proto;
-pub mod ticket;
 
-pub use ticket::Ticket;
+/// ALPN of the file protocol. Only paired devices get past the agent's
+/// allow-list check. (`pigeon/0` with a bearer token in a ticket is gone.)
+pub const ALPN: &[u8] = b"pigeon/1";
 
-/// ALPN identifying the Pigeon protocol on an iroh connection.
-pub const ALPN: &[u8] = b"pigeon/0";
+/// ALPN of the pairing protocol; the agent offers it only while an invite is
+/// active.
+pub const PAIR_ALPN: &[u8] = b"pigeon/pair/1";
 
 /// Placeholder printed instead of secrets in `Debug` output.
 pub(crate) const REDACTED: &str = "<redacted>";
@@ -59,13 +63,6 @@ pub fn display_safe(s: &str) -> String {
         }
     }
     out
-}
-
-/// Generates a fresh random 32-byte access token (Day-1 auth).
-pub fn new_token() -> anyhow::Result<[u8; 32]> {
-    let mut token = [0u8; 32];
-    getrandom::fill(&mut token).map_err(|e| anyhow::anyhow!("no OS randomness: {e}"))?;
-    Ok(token)
 }
 
 #[cfg(test)]

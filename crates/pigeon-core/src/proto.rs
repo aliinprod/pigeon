@@ -1,9 +1,10 @@
 //! Wire protocol: length-prefixed postcard frames on a single QUIC bi-stream.
 //!
-//! One request per connection (v1):
-//! 1. client -> agent: [`Hello`] (carries the access token)
-//! 2. client -> agent: [`Request`]
-//! 3. agent -> client: [`Response`]
+//! One request per connection, ALPN `pigeon/1` (the ALPN is the version):
+//! 1. the agent checks the peer's endpoint ID (verified by iroh's TLS
+//!    handshake) against its allow-list before accepting any stream;
+//! 2. client -> agent: [`Request`] (no secret on the wire);
+//! 3. agent -> client: [`Response`];
 //! 4. for [`Response::File`], the agent then streams the raw file bytes from
 //!    the requested offset and finishes the stream.
 
@@ -11,31 +12,11 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Protocol version sent in [`Hello`].
-pub const PROTOCOL_VERSION: u32 = 0;
-
 /// Largest frame we accept (file bytes are not framed, so this is plenty).
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
-/// Largest [`Hello`] frame we accept. The hello is read before the peer is
-/// authenticated, so it must not let a stranger make us allocate much memory.
-pub const MAX_HELLO_LEN: u32 = 256;
-
-/// First frame on every stream.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Hello {
-    pub version: u32,
-    pub token: [u8; 32],
-}
-
-impl std::fmt::Debug for Hello {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Hello")
-            .field("version", &self.version)
-            .field("token", &crate::REDACTED)
-            .finish()
-    }
-}
+/// Largest [`Request`] the agent reads (a path plus an offset).
+pub const MAX_REQUEST_LEN: u32 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
@@ -127,27 +108,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hello_fits_and_oversized_frames_are_refused_early() {
-        let hello = Hello {
-            version: PROTOCOL_VERSION,
-            token: [0xff; 32],
+    async fn requests_fit_and_oversized_frames_are_refused_early() {
+        let req = Request::Get {
+            path: "x".repeat(4096),
+            offset: u64::MAX,
         };
         let mut buf = Vec::new();
-        write_frame(&mut buf, &hello).await.unwrap();
-        let back: Hello = read_frame_max(&mut buf.as_slice(), MAX_HELLO_LEN)
+        write_frame(&mut buf, &req).await.unwrap();
+        let back: Request = read_frame_max(&mut buf.as_slice(), MAX_REQUEST_LEN)
             .await
             .unwrap();
-        assert_eq!(back.token, hello.token);
+        assert_eq!(back, req);
 
         // A length prefix alone (no body) claiming a big frame must be refused
         // from the prefix, not after trying to read/allocate the body.
-        for len in [MAX_HELLO_LEN + 1, MAX_FRAME_LEN, u32::MAX] {
+        for len in [MAX_REQUEST_LEN + 1, MAX_FRAME_LEN, u32::MAX] {
             let prefix = len.to_be_bytes();
-            let err = read_frame_max::<_, Hello>(&mut prefix.as_slice(), MAX_HELLO_LEN)
+            let err = read_frame_max::<_, Request>(&mut prefix.as_slice(), MAX_REQUEST_LEN)
                 .await
                 .unwrap_err();
             assert!(format!("{err:#}").contains("too large"), "{len}: {err:#}");
         }
+        let prefix = (crate::pair::MAX_PAIR_FRAME + 1).to_be_bytes();
+        let err = read_frame_max::<_, crate::pair::PairStart>(
+            &mut prefix.as_slice(),
+            crate::pair::MAX_PAIR_FRAME,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("too large"), "{err:#}");
         let prefix = (MAX_FRAME_LEN + 1).to_be_bytes();
         let err = read_frame::<_, Request>(&mut prefix.as_slice())
             .await

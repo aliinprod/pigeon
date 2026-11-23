@@ -1,12 +1,16 @@
-//! `pigeon`: fetch files from a Pigeon agent.
+//! `pigeon`: fetch files from a paired Pigeon agent.
 //!
-//! - `pigeon ls [PATH]`
-//! - `pigeon get <PATH> [-o OUT]`
+//! - `pigeon pair <INVITE-LINK> [--name NAME]`: pair once with an agent; asks
+//!   for the 4-word code shown on the agent's screen.
+//! - `pigeon ls [PATH]`, `pigeon get <PATH> [-o OUT]`: use the paired agent
+//!   (`--agent NAME` if there are several). No ticket, nothing secret on the
+//!   command line: this device is recognised by its key.
+//! - `pigeon agents`, `pigeon forget <NAME>`.
 //!
-//! The ticket is a secret, so it is never a command-line argument (shell
-//! history, process list, clap error echo; TH-14). It is read from
-//! `--ticket-file FILE`, the `PIGEON_TICKET` environment variable, or one line
-//! on stdin, in that order.
+//! The pairing code is a secret, so it is never a command-line argument
+//! (shell history, process list, clap error echo; TH-14). It is read from
+//! `--code-file FILE`, the `PIGEON_PAIR_CODE` environment variable, or typed
+//! at the prompt, in that order.
 //!
 //! `--relay-only` disables direct (UDP hole-punched) paths, so every byte goes
 //! through the relay. Useful for testing the fallback path.
@@ -19,10 +23,17 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::{Endpoint, endpoint::presets};
-use pigeon_core::{Ticket, client, config::Home, keystore::CLIENT_KEY};
+use pigeon_core::{
+    client,
+    config::Home,
+    devices::{AGENTS_FILE, AgentList, PairedAgent},
+    display_safe, fingerprint,
+    keystore::CLIENT_KEY,
+    pair::{self, InviteLink, PairingCode},
+};
 
-/// Environment variable that may hold the ticket.
-const TICKET_ENV: &str = "PIGEON_TICKET";
+/// Environment variable that may hold the pairing code.
+const CODE_ENV: &str = "PIGEON_PAIR_CODE";
 
 #[derive(Parser)]
 #[command(name = "pigeon", version, about = "Your files know the way home.")]
@@ -30,19 +41,32 @@ struct Cli {
     /// Never use a direct connection; send everything through the relay.
     #[arg(long, global = true)]
     relay_only: bool,
-    /// Read the ticket from this file (otherwise $PIGEON_TICKET, otherwise stdin).
-    #[arg(long, global = true, value_name = "FILE")]
-    ticket_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Pair this device with an agent, using the invite link from
+    /// `pigeon-agent pair` and the code shown on the agent's screen.
+    Pair {
+        /// The invite link (`pigeon-invite-...`). Not secret.
+        link: InviteLink,
+        /// What to call this agent here, e.g. "Office Mac".
+        #[arg(long)]
+        name: Option<String>,
+        /// Read the pairing code from this file (otherwise $PIGEON_PAIR_CODE,
+        /// otherwise you are asked to type it).
+        #[arg(long, value_name = "FILE")]
+        code_file: Option<PathBuf>,
+    },
     /// List a folder on the agent.
     Ls {
         #[arg(default_value = "")]
         path: String,
+        /// Which paired agent (name or fingerprint), if there are several.
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Download one file (resumes from OUT.part if present). Never overwrites:
     /// if OUT exists, saves as "OUT (1)", "OUT (2)", ...
@@ -51,23 +75,45 @@ enum Command {
         /// Output file (default: the file name from PATH, in the current folder).
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Which paired agent (name or fingerprint), if there are several.
+        #[arg(long)]
+        agent: Option<String>,
     },
+    /// List the agents this device is paired with.
+    Agents,
+    /// Forget a paired agent on this device (revoke it on the agent too).
+    Forget { agent: String },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    // A stable device identity, so an agent can recognise this device.
-    let (key, _store, _created) = Home::from_env()?.device_key(CLIENT_KEY)?;
+    let home = Home::from_env()?;
+    let agents_path = home.dir.join(AGENTS_FILE);
+    match cli.command {
+        Command::Agents => return agents_cmd(&agents_path),
+        Command::Forget { agent } => return forget_cmd(&agents_path, &agent),
+        _ => {}
+    }
+
+    // Read the code before going online, so a typo fails fast and locally.
+    let code = match &cli.command {
+        Command::Pair { code_file, .. } => Some(PairingCode::parse(&read_secret(
+            "pairing code",
+            code_file.as_deref(),
+            CODE_ENV,
+        )?)?),
+        _ => None,
+    };
+
+    // A stable device identity: the agent's allow-list holds its public key.
+    let (key, _store, _created) = home.device_key(CLIENT_KEY)?;
     let mut builder = Endpoint::builder(presets::N0).secret_key(key);
     if cli.relay_only {
         builder = builder.clear_ip_transports();
     }
-    // Read the ticket before binding, so a bad ticket fails fast.
-    let text = read_secret("ticket", cli.ticket_file.as_deref(), TICKET_ENV)?;
-    let ticket: Ticket = text.parse()?;
     let endpoint = builder.bind().await?;
-    let result = run(&endpoint, ticket, cli.command, cli.relay_only).await;
+    let result = run(&endpoint, &agents_path, cli.command, code).await;
     endpoint.close().await;
     result
 }
@@ -84,7 +130,7 @@ fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<String> {
     } else {
         let stdin = std::io::stdin();
         if stdin.is_terminal() {
-            eprint!("Paste the {what} and press Enter: ");
+            eprint!("Type the {what} shown on the agent and press Enter: ");
             std::io::stderr().flush()?;
         }
         let mut line = String::new();
@@ -95,20 +141,8 @@ fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<String> {
         line
     };
     let text = text.trim().to_string();
-    anyhow::ensure!(
-        !text.is_empty(),
-        "no {what} given: use --{what}-file, ${env} or stdin"
-    );
+    anyhow::ensure!(!text.is_empty(), "no {what} given");
     Ok(text)
-}
-
-/// In relay-only mode, drop the agent's direct addresses from the ticket so
-/// we only ever dial its relay.
-fn prepare(mut ticket: Ticket, relay_only: bool) -> Ticket {
-    if relay_only {
-        ticket.addr.addrs.retain(|a| a.is_relay());
-    }
-    ticket
 }
 
 /// Local file name for a remote PATH when no `-o` is given: its last
@@ -153,27 +187,57 @@ fn default_out(path: &str) -> Result<PathBuf> {
 
 async fn run(
     endpoint: &Endpoint,
-    ticket: Ticket,
+    agents_path: &Path,
     command: Command,
-    relay_only: bool,
+    code: Option<PairingCode>,
 ) -> Result<()> {
-    let ticket = prepare(ticket, relay_only);
     match command {
-        Command::Ls { path } => {
-            for e in client::list(endpoint, &ticket, &path).await? {
+        Command::Pair { link, name, .. } => {
+            let code = code.context("no pairing code")?;
+            let paired = pair::pair(endpoint, &link, &code).await?;
+            let fp = fingerprint(&paired.agent);
+            let agent = PairedAgent {
+                id: paired.agent,
+                name: name
+                    .map(|n| n.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| format!("agent {fp}")),
+                relay_url: link.addr.relay_urls().next().cloned(),
+                paired_at: pair::now_secs(),
+            };
+            let mut list = AgentList::load(agents_path)?;
+            list.upsert(agent.clone());
+            list.save(agents_path)?;
+            println!(
+                "paired with {} (fingerprint {fp}). Try `pigeon ls`.",
+                display_safe(&agent.name)
+            );
+            println!(
+                "this device's fingerprint is {}; the agent lists it in `pigeon-agent devices`.",
+                fingerprint(&endpoint.id())
+            );
+        }
+        Command::Ls { path, agent } => {
+            let agent = AgentList::load(agents_path)?
+                .pick(agent.as_deref())?
+                .clone();
+            for e in client::list(endpoint, &agent.dial_addr(), &path).await? {
                 let kind = if e.is_dir { "dir " } else { "file" };
                 // Names come from the agent: never let them drive the terminal.
-                let name = pigeon_core::display_safe(&e.name);
+                let name = display_safe(&e.name);
                 println!("{kind}  {:>14}  {:>10}  {name}", e.size, e.mtime);
             }
         }
-        Command::Get { path, out } => {
+        Command::Get { path, out, agent } => {
+            let agent = AgentList::load(agents_path)?
+                .pick(agent.as_deref())?
+                .clone();
             let out = match out {
                 Some(out) => out,
                 None => default_out(&path)?,
             };
             let out = client::free_path(&out);
-            let stats = client::get(endpoint, &ticket, &path, &out).await?;
+            let stats = client::get(endpoint, &agent.dial_addr(), &path, &out).await?;
             if stats.resumed_from > 0 {
                 println!("resumed from byte {}", stats.resumed_from);
             }
@@ -187,60 +251,85 @@ async fn run(
                 stats.sha256
             );
         }
+        Command::Agents | Command::Forget { .. } => unreachable!("handled before going online"),
     }
+    Ok(())
+}
+
+fn agents_cmd(path: &Path) -> Result<()> {
+    let list = AgentList::load(path)?;
+    if list.agents.is_empty() {
+        println!("not paired with any agent yet: run `pigeon pair <INVITE-LINK>`");
+    }
+    for a in &list.agents {
+        println!("{}  {}", fingerprint(&a.id), display_safe(&a.name));
+    }
+    Ok(())
+}
+
+fn forget_cmd(path: &Path, query: &str) -> Result<()> {
+    let mut list = AgentList::load(path)?;
+    let gone = list.remove(query)?;
+    list.save(path)?;
+    println!(
+        "forgot {} ({}). To cut it off on the agent side too, run `pigeon-agent revoke` there.",
+        display_safe(&gone.name),
+        fingerprint(&gone.id)
+    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iroh::{EndpointAddr, RelayUrl, SecretKey};
 
     #[test]
-    fn relay_only_drops_direct_addresses_from_the_ticket() {
-        let relay: RelayUrl = "https://relay.example.com".parse().unwrap();
-        let addr = EndpointAddr::new(SecretKey::generate().public())
-            .with_relay_url(relay.clone())
-            .with_ip_addr("192.0.2.1:4433".parse().unwrap())
-            .with_ip_addr("[2001:db8::1]:4433".parse().unwrap());
-        let ticket = Ticket {
-            addr,
-            token: [7; 32],
-        };
-
-        let kept = prepare(ticket.clone(), false);
-        assert_eq!(kept.addr.addrs.len(), 3);
-
-        let relayed = prepare(ticket, true);
-        assert_eq!(relayed.addr.addrs.len(), 1);
-        assert!(relayed.addr.addrs.iter().all(|a| a.is_relay()));
-        assert_eq!(relayed.token, [7; 32]);
-    }
-
-    #[test]
-    fn ticket_is_read_from_a_file_and_never_echoed() {
+    fn code_is_read_from_a_file_and_never_echoed() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("ticket.txt");
-        std::fs::write(&file, "  pigeonsecretticketbody \r\n").unwrap();
-        let text = read_secret("ticket", Some(&file), "PIGEON_TEST_UNSET_VAR").unwrap();
-        assert_eq!(text, "pigeonsecretticketbody");
-        // A ticket that does not parse must not show up in the error.
-        let err = format!("{:#}", text.parse::<Ticket>().unwrap_err());
-        assert!(!err.contains("secretticketbody"), "{err}");
+        let file = dir.path().join("code.txt");
+        std::fs::write(&file, "  Acid ACORN acre-zoom \r\n").unwrap();
+        let text = read_secret("pairing code", Some(&file), "PIGEON_TEST_UNSET_VAR").unwrap();
+        assert_eq!(
+            PairingCode::parse(&text).unwrap().reveal(),
+            "acid-acorn-acre-zoom"
+        );
+        // A code with a typo must not show up in the error.
+        std::fs::write(&file, "acid acorn acre zzsecretzz").unwrap();
+        let text = read_secret("pairing code", Some(&file), "X").unwrap();
+        let err = format!("{:#}", PairingCode::parse(&text).unwrap_err());
+        assert!(!err.contains("zzsecretzz"), "{err}");
         // A missing file names the file, not any secret.
-        let err = read_secret("ticket", Some(&dir.path().join("nope")), "X").unwrap_err();
-        assert!(format!("{err:#}").contains("could not read the ticket"));
+        let err = read_secret("pairing code", Some(&dir.path().join("nope")), "X").unwrap_err();
+        assert!(format!("{err:#}").contains("could not read the pairing code"));
     }
 
     #[test]
-    fn ticket_is_not_a_command_line_argument() {
-        // `ls <TICKET>` from Day 1 is now `ls <PATH>`: the old form is taken as
-        // a path, so a ticket pasted there never reaches the parser or an error.
+    fn secrets_are_not_command_line_arguments() {
+        // Only the (non-secret) link is an argument; the code has no flag that
+        // takes its value, and `ls`/`get` take no ticket any more.
+        let link = pigeon_core::pair::InviteLink {
+            addr: iroh::EndpointAddr::new(iroh::SecretKey::from_bytes(&[1; 32]).public()),
+            invite_id: [0; 16],
+            expires_at: 0,
+        }
+        .to_string();
+        let cli = Cli::try_parse_from(["pigeon", "pair", &link, "--code-file", "c.txt"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Pair {
+                code_file: Some(_),
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(["pigeon", "pair", &link, "--code", "acid"]).is_err());
         let cli = Cli::try_parse_from(["pigeon", "ls", "pigeonabc"]).unwrap();
-        assert!(matches!(cli.command, Command::Ls { path } if path == "pigeonabc"));
-        let cli =
-            Cli::try_parse_from(["pigeon", "--ticket-file", "t.txt", "get", "a.txt"]).unwrap();
-        assert_eq!(cli.ticket_file, Some(PathBuf::from("t.txt")));
+        assert!(matches!(cli.command, Command::Ls { path, .. } if path == "pigeonabc"));
+        // A bad link is reported without echoing it back.
+        let err = Cli::try_parse_from(["pigeon", "pair", "pigeon-invite-zzsecretzz"])
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("invite link"), "{err}");
     }
 
     #[test]

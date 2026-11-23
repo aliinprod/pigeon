@@ -26,15 +26,28 @@ Early builds are unsigned and come from GitHub Actions (repo access needed).
    xattr -d com.apple.quarantine pigeon-agent pigeon
    ./pigeon-agent share ~/Documents/ForHome
    ```
-   It prints a `ticket: pigeon...` line. Keep the agent running, and treat the ticket like a password: anyone with it can read that folder.
-3. **On Windows**, save the ticket to a file (or paste it when asked), then list and fetch:
-   ```powershell
-   .\pigeon.exe --ticket-file ticket.txt ls
-   .\pigeon.exe --ticket-file ticket.txt get report.pdf
+   Keep it running. The first start creates the Mac's device key in your login Keychain (macOS may ask you to allow access; choose "Always Allow").
+3. **Pair the home PC (once).** In a second Mac terminal:
+   ```sh
+   ./pigeon-agent pair --name "Home PC"
    ```
-   The ticket is never a command-line argument, so it does not end up in your shell history. You can also set `$env:PIGEON_TICKET`, or run without either and paste it at the prompt.
+   It prints an **invite link** (`pigeon-invite-...`, not secret: you may email it to yourself) and a **4-word code** like `otter-plaza-crumb-vivid`. The code is the secret: write it down or take a photo of the screen, never send it. The invite works once, for 12 hours, and dies after 3 wrong codes.
+4. **On Windows**, pair with the link and type the code when asked:
+   ```powershell
+   .\pigeon.exe pair pigeon-invite-... --name "Office Mac"
+   ```
+   Both sides show each other's fingerprint. From now on no ticket or code is needed: the Mac recognises this PC by its key (kept in Windows Credential Manager).
+5. **List and fetch:**
+   ```powershell
+   .\pigeon.exe ls
+   .\pigeon.exe get report.pdf
+   ```
    `get` resumes an interrupted download, checks the SHA-256, and never overwrites: if `report.pdf` exists it saves `report (1).pdf` and prints the final path.
    Add `--relay-only` to force the encrypted relay path (slower; for testing).
+
+**Lost the PC, or done with it?** On the Mac: `./pigeon-agent devices` lists paired devices and `./pigeon-agent revoke "Home PC"` cuts one off at once (a running agent drops its connections within a second). `./pigeon-agent reset --yes` makes a new Mac key and forgets every pairing.
+
+The Day-1 "ticket" is gone: anyone who ever saw one can no longer use it.
 
 ## Roadmap
 See [ROADMAP.md](ROADMAP.md). Daily progress: [DEVLOG.md](DEVLOG.md).
