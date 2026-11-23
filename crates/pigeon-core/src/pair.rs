@@ -32,6 +32,9 @@ pub const MAX_PAIR_FRAME: u32 = 128;
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for a whole pairing handshake.
 pub const TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Time a pairing peer gets to send its first frame, before it may take the
+/// one-at-a-time pairing lock (W-2).
+pub const START_TIMEOUT: Duration = Duration::from_secs(3);
 /// Default invite lifetime.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(12 * 3600);
 /// Longest invite lifetime the agent accepts.

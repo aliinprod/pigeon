@@ -139,16 +139,15 @@ async fn three_wrong_codes_burn_the_invite() {
     shutdown(s).await;
 }
 
-/// P-T5: while one pairing handshake is running, a second is refused at once
-/// (no parallel guessing) and costs no attempt.
+/// P-T5: while one pairing handshake is running (a peer with the link has
+/// started it and stalls), a second is refused at once (no parallel
+/// guessing) and costs no attempt.
 #[tokio::test(flavor = "multi_thread")]
 async fn second_concurrent_pairing_is_refused() {
     let (s, link, code) = with_invite().await;
-    // Peer A starts a pairing connection and stalls inside it.
+    // Peer A sends a valid PairStart and then stalls before confirming.
     let a = new_client().await;
-    let held = within(a.connect(s.addr.clone(), PAIR_ALPN)).await.unwrap();
-    let (_send, _recv) = held.open_bi().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (held, _send, _recv) = start_raw_handshake(&a, &s, link.invite_id).await;
 
     let started = Instant::now();
     let err = within(pair::pair(&s.client, &link, &code))
@@ -162,20 +161,93 @@ async fn second_concurrent_pairing_is_refused() {
         started.elapsed() < Duration::from_secs(5),
         "not refused at once"
     );
+    assert!(format!("{err:#}").contains("another pairing"), "{err:#}");
     assert!(s.agent.devices().devices.is_empty());
 
-    // Once A goes away, the invite (all 3 attempts) is still there.
+    // Once A goes away the invite still works: A used one attempt, the
+    // refused pairing none.
     held.close(0u32.into(), b"bye");
-    let mut paired = false;
-    for _ in 0..20 {
-        if within(pair::pair(&s.client, &link, &code)).await.is_ok() {
-            paired = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-    assert!(paired, "pairing did not work after the stalled peer left");
+    pair_eventually(&s, &link, &code).await;
     a.close().await;
+    shutdown(s).await;
+}
+
+/// W-2 (Warden, inverted): a stranger who knows only the agent ID connects
+/// on the pairing ALPN and sends nothing. The owner's pairing must still go
+/// through at once; the stranger never gets the pairing lock.
+#[tokio::test(flavor = "multi_thread")]
+async fn stranger_without_invite_id_does_not_block_pairing() {
+    let (s, link, code) = with_invite().await;
+    let stranger = new_client().await;
+    let held = within(stranger.connect(s.addr.clone(), PAIR_ALPN))
+        .await
+        .unwrap();
+    let (_send, _recv) = held.open_bi().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let t = Instant::now();
+    within(pair::pair(&s.client, &link, &code)).await.unwrap();
+    println!(
+        "owner paired after {:?} with a silent stranger connected",
+        t.elapsed()
+    );
+    assert!(t.elapsed() < Duration::from_secs(2), "owner was held up");
+    assert!(s.agent.devices().contains(&s.client.id()));
+    // The silent stranger is dropped after the start timeout.
+    tokio::time::timeout(pair::START_TIMEOUT + Duration::from_secs(3), held.closed())
+        .await
+        .expect("a silent pairing peer was kept open");
+    stranger.close().await;
+    shutdown(s).await;
+}
+
+/// W-2: a PairStart for an unknown invite ID is refused without using an
+/// attempt or the lock, and a second pairing connection from the same peer
+/// is refused (per-peer cap).
+#[tokio::test(flavor = "multi_thread")]
+async fn wrong_invite_id_and_second_connection_per_peer_are_refused() {
+    let (s, link, code) = with_invite().await;
+    let stranger = new_client().await;
+    let conn = within(stranger.connect(s.addr.clone(), PAIR_ALPN))
+        .await
+        .unwrap();
+    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+    let start = PairStart {
+        version: PAIR_VERSION,
+        invite_id: [7; 16],
+        msg_a: vec![0; 33],
+    };
+    write_frame(&mut send, &start).await.unwrap();
+    let reply: AgentMsg = within(read_frame_max(&mut recv, MAX_PAIR_FRAME))
+        .await
+        .unwrap();
+    assert!(
+        matches!(&reply, AgentMsg::Refused(why) if why.contains("no active invite")),
+        "{reply:?}"
+    );
+    conn.close(0u32.into(), b"bye");
+
+    // Per-peer cap: while A has one pairing connection open, a second one
+    // from A is closed as busy.
+    let a = new_client().await;
+    let first = within(a.connect(s.addr.clone(), PAIR_ALPN)).await.unwrap();
+    let (_s1, _r1) = first.open_bi().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let second = within(a.connect(s.addr.clone(), PAIR_ALPN)).await.unwrap();
+    let reason = tokio::time::timeout(Duration::from_secs(5), second.closed())
+        .await
+        .expect("second pairing connection from one peer was kept");
+    assert!(format!("{reason}").contains("busy"), "{reason}");
+    first.close(0u32.into(), b"bye");
+
+    // None of that cost an attempt: three wrong codes are still allowed
+    // after it, so the first wrong one reports 2 left.
+    let err = within(pair::pair(&s.client, &link, &wrong(&code)))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("attempts left: 2"), "{err:#}");
+    a.close().await;
+    stranger.close().await;
     shutdown(s).await;
 }
 

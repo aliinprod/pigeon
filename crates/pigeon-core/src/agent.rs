@@ -16,7 +16,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use iroh::{
     Endpoint, EndpointId,
-    endpoint::{Connection, SendStream},
+    endpoint::{Connection, RecvStream, SendStream},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt},
@@ -170,6 +170,8 @@ struct Inner {
     conns: Mutex<HashMap<usize, (EndpointId, Connection)>>,
     slots: Arc<Semaphore>,
     peers: Arc<PeerCounts>,
+    /// Pairing connections per peer (at most one each, W-2).
+    pair_peers: Arc<PeerCounts>,
 }
 
 /// Removes a connection from the live map when its handler ends.
@@ -212,6 +214,7 @@ impl Agent {
                 pairing: tokio::sync::Mutex::new(()),
                 conns: Mutex::new(HashMap::new()),
                 peers: Arc::new(PeerCounts::default()),
+                pair_peers: Arc::new(PeerCounts::default()),
             }),
         }
     }
@@ -403,18 +406,63 @@ impl Agent {
     }
 
     async fn handle_pairing(&self, conn: &Connection) -> Result<()> {
-        // PAIRING.md section 5: one handshake at a time, others refused at once.
-        let Ok(_busy) = self.inner.pairing.try_lock() else {
+        let peer = conn.remote_id();
+        // One pairing connection per peer at a time (W-2).
+        let Some(_peer_slot) = self.inner.pair_peers.try_take(peer, 1) else {
             conn.close(close::BUSY.into(), b"busy");
-            bail!("another pairing is in progress; refused");
+            bail!("this device already has a pairing connection open; refused");
         };
         if !self.invite_active() {
             conn.close(close::NO_INVITE.into(), b"no invite");
             bail!("no active invite");
         }
-        tokio::time::timeout(pair::TOTAL_TIMEOUT, self.pair_steps(conn))
-            .await
-            .context("pairing timed out")?
+        // Read and check PairStart *before* taking the pairing lock (W-2): a
+        // peer that knows only the agent ID (no invite ID) must not be able
+        // to block the owner's pairing by connecting and sending nothing.
+        let (mut send, recv, start) = tokio::time::timeout(pair::START_TIMEOUT, async {
+            let (send, mut recv) = conn.accept_bi().await?;
+            let start: PairStart = read_frame_max(&mut recv, MAX_PAIR_FRAME).await?;
+            anyhow::Ok((send, recv, start))
+        })
+        .await
+        .context("no pairing request in time")??;
+        self.expire_invite();
+        let refusal = if start.version != PAIR_VERSION {
+            Some("unsupported pairing version".to_string())
+        } else if !self.invite_matches(&start.invite_id) {
+            Some("no active invite: it expired, was used, or was replaced".to_string())
+        } else {
+            None
+        };
+        if let Some(why) = refusal {
+            step(write_frame(&mut send, &AgentMsg::Refused(why.clone()))).await?;
+            send.finish()?;
+            let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+            bail!("{why}");
+        }
+        // PAIRING.md section 5: one handshake at a time, others refused at
+        // once (and without using an attempt).
+        let Ok(_busy) = self.inner.pairing.try_lock() else {
+            let why = "another pairing is in progress; try again in a moment";
+            step(write_frame(&mut send, &AgentMsg::Refused(why.into()))).await?;
+            send.finish()?;
+            let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+            bail!("{why}");
+        };
+        tokio::time::timeout(
+            pair::TOTAL_TIMEOUT,
+            self.pair_steps(conn, send, recv, start),
+        )
+        .await
+        .context("pairing timed out")?
+    }
+
+    /// Whether `id` is the active, unexpired invite (uses no attempt).
+    fn invite_matches(&self, id: &[u8; 16]) -> bool {
+        let current = self.inner.invite.lock().expect("invite poisoned");
+        current
+            .as_ref()
+            .is_some_and(|i| i.invite_id == *id && !i.is_expired(pair::now_secs()))
     }
 
     /// Uses one attempt of invite `id`. Returns its code and device name, or
@@ -482,22 +530,17 @@ impl Agent {
         Ok(())
     }
 
-    async fn pair_steps(&self, conn: &Connection) -> Result<()> {
+    async fn pair_steps(
+        &self,
+        conn: &Connection,
+        mut send: SendStream,
+        mut recv: RecvStream,
+        start: PairStart,
+    ) -> Result<()> {
         let client = conn.remote_id();
         let agent = self.inner.endpoint.id();
         let fp = crate::fingerprint(&client);
-        let (mut send, mut recv) = step(async { Ok(conn.accept_bi().await?) }).await?;
-        let start: PairStart = step(read_frame_max(&mut recv, MAX_PAIR_FRAME)).await?;
         let refuse = |why: String| AgentMsg::Refused(why);
-        if start.version != PAIR_VERSION {
-            step(write_frame(
-                &mut send,
-                &refuse("unsupported pairing version".into()),
-            ))
-            .await?;
-            send.finish()?;
-            bail!("unsupported pairing version {}", start.version);
-        }
         let cb = pair::channel_binding(conn, &start.invite_id)?;
         let (code, device_name) = match self.take_attempt(&start.invite_id) {
             Ok(found) => found,
