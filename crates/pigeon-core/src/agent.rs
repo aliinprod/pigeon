@@ -97,6 +97,28 @@ pub trait AgentStorage: Send + Sync {
     /// gone (`None`: used, burned or expired). Implementations must not
     /// overwrite a newer invite with a different ID.
     fn invite_changed(&self, invite_id: &[u8; 16], invite: Option<&Invite>) -> Result<()>;
+    /// Remembers that `invite_id` was used, burned, expired or replaced, so
+    /// it is never accepted again, also after a restart (W-5).
+    fn invite_spent(&self, invite_id: &[u8; 16]) -> Result<()>;
+    /// Whether `invite_id` was spent before. Fail closed: return `true` if
+    /// the record cannot be read.
+    fn is_spent(&self, invite_id: &[u8; 16]) -> bool;
+}
+
+/// What [`Agent::offer_invite`] did with an invite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offer {
+    /// It is now the active invite.
+    Activated,
+    /// It already was the active invite (nothing changed).
+    AlreadyActive,
+    /// It was used, burned, expired or replaced before: ignored.
+    Spent,
+    /// It has expired: ignored.
+    Expired,
+    /// It was made for another agent key (e.g. after `pigeon-agent reset`
+    /// while this agent kept running): ignored.
+    OtherAgent,
 }
 
 /// Keeps everything in memory.
@@ -109,6 +131,14 @@ impl AgentStorage for NoStorage {
 
     fn invite_changed(&self, _: &[u8; 16], _: Option<&Invite>) -> Result<()> {
         Ok(())
+    }
+
+    fn invite_spent(&self, _: &[u8; 16]) -> Result<()> {
+        Ok(())
+    }
+
+    fn is_spent(&self, _: &[u8; 16]) -> bool {
+        false
     }
 }
 
@@ -261,27 +291,48 @@ impl Agent {
     /// Activates `invite` (replacing any other one, which then can never be
     /// used again). Ignored if it was already spent or has expired; a call
     /// with the active invite's ID keeps the in-memory attempt count.
-    pub fn offer_invite(&self, invite: Invite) {
+    pub fn offer_invite(&self, invite: Invite) -> Offer {
+        // M1: an invite made for another key (e.g. after `pigeon-agent reset`
+        // while this agent kept running) can never be used here.
+        if invite.agent.is_some_and(|a| a != self.inner.endpoint.id()) {
+            return Offer::OtherAgent;
+        }
+        // Storage I/O happens outside the locks (W-5).
+        let persisted_spent = self.inner.storage.is_spent(&invite.invite_id);
         let now = pair::now_secs();
-        // Lock order everywhere: `invite`, then `spent` (see `clear_invite`).
-        let mut current = self.inner.invite.lock().expect("invite poisoned");
-        let mut spent = self.inner.spent.lock().expect("spent poisoned");
-        if spent.contains(&invite.invite_id) {
-            return;
+        let mut newly_spent = Vec::new();
+        let outcome = {
+            // Lock order everywhere: `invite`, then `spent` (see `clear_invite`).
+            let mut current = self.inner.invite.lock().expect("invite poisoned");
+            let mut spent = self.inner.spent.lock().expect("spent poisoned");
+            let outcome = if persisted_spent || spent.contains(&invite.invite_id) {
+                Offer::Spent
+            } else if current
+                .as_ref()
+                .is_some_and(|c| c.invite_id == invite.invite_id)
+            {
+                Offer::AlreadyActive
+            } else {
+                if let Some(old) = current.take() {
+                    spent.insert(old.invite_id);
+                    newly_spent.push(old.invite_id);
+                }
+                if invite.is_expired(now) {
+                    spent.insert(invite.invite_id);
+                    newly_spent.push(invite.invite_id);
+                    Offer::Expired
+                } else {
+                    *current = Some(invite);
+                    Offer::Activated
+                }
+            };
+            self.update_alpns(current.is_some());
+            outcome
+        };
+        for id in newly_spent {
+            self.persist_cleared(Some(id));
         }
-        if let Some(cur) = current.as_ref() {
-            if cur.invite_id == invite.invite_id {
-                return;
-            }
-            spent.insert(cur.invite_id);
-        }
-        if invite.is_expired(now) {
-            spent.insert(invite.invite_id);
-            *current = None;
-        } else {
-            *current = Some(invite);
-        }
-        self.update_alpns(current.is_some());
+        outcome
     }
 
     fn update_alpns(&self, pairing: bool) {
@@ -292,32 +343,45 @@ impl Agent {
         self.inner.endpoint.set_alpns(alpns);
     }
 
-    /// Drops the active invite (used, burned or expired). The caller holds
-    /// the `invite` lock; this takes `spent` after it.
-    fn clear_invite(&self, current: &mut Option<Invite>) {
-        if let Some(old) = current.take() {
-            self.inner
-                .spent
-                .lock()
-                .expect("spent poisoned")
-                .insert(old.invite_id);
-            if let Err(e) = self.inner.storage.invite_changed(&old.invite_id, None) {
-                eprintln!("warning: could not remove the used invite from storage: {e:#}");
-            }
+    /// Drops the active invite (used, burned or expired) in memory. The
+    /// caller holds the `invite` lock; this takes `spent` after it. Returns
+    /// its ID, to pass to [`Self::persist_cleared`] *after* the lock is gone.
+    fn clear_invite(&self, current: &mut Option<Invite>) -> Option<[u8; 16]> {
+        let old = current.take().map(|old| old.invite_id);
+        if let Some(id) = old {
+            self.inner.spent.lock().expect("spent poisoned").insert(id);
         }
         self.update_alpns(false);
+        old
+    }
+
+    /// Records a cleared invite in storage: spent for good (W-5), and its
+    /// keystore copy removed. Call without holding any lock.
+    fn persist_cleared(&self, id: Option<[u8; 16]>) {
+        let Some(id) = id else { return };
+        if let Err(e) = self.inner.storage.invite_spent(&id) {
+            eprintln!("warning: could not record the used invite: {e:#}");
+        }
+        if let Err(e) = self.inner.storage.invite_changed(&id, None) {
+            eprintln!("warning: could not remove the used invite from storage: {e:#}");
+        }
     }
 
     /// Drops the invite if it has expired. Call periodically.
     pub fn expire_invite(&self) {
-        let mut current = self.inner.invite.lock().expect("invite poisoned");
-        if current
-            .as_ref()
-            .is_some_and(|i| i.is_expired(pair::now_secs()))
-        {
-            eprintln!("the pairing invite expired");
-            self.clear_invite(&mut current);
-        }
+        let cleared = {
+            let mut current = self.inner.invite.lock().expect("invite poisoned");
+            if current
+                .as_ref()
+                .is_some_and(|i| i.is_expired(pair::now_secs()))
+            {
+                eprintln!("the pairing invite expired");
+                self.clear_invite(&mut current)
+            } else {
+                None
+            }
+        };
+        self.persist_cleared(cleared);
     }
 
     /// Serves incoming connections until the endpoint is closed.
@@ -471,28 +535,36 @@ impl Agent {
         &self,
         id: &[u8; 16],
     ) -> std::result::Result<(Zeroizing<String>, Option<String>), String> {
-        let mut current = self.inner.invite.lock().expect("invite poisoned");
-        let gone = "no active invite: it expired, was used, or was replaced".to_string();
-        let Some(invite) = current.as_mut() else {
-            return Err(gone);
+        let mut cleared = None;
+        let mut to_save = None;
+        let result = {
+            let mut current = self.inner.invite.lock().expect("invite poisoned");
+            let gone = "no active invite: it expired, was used, or was replaced".to_string();
+            match current.as_mut() {
+                Some(invite) if invite.invite_id == *id => {
+                    if invite.is_expired(pair::now_secs()) {
+                        cleared = self.clear_invite(&mut current);
+                        Err("this invite has expired".into())
+                    } else if invite.attempts_left == 0 {
+                        cleared = self.clear_invite(&mut current);
+                        Err("this invite is used up".into())
+                    } else {
+                        // Decrement before any work (PAIRING.md section 4, step 4).
+                        invite.attempts_left -= 1;
+                        to_save = Some(invite.clone());
+                        Ok((invite.code(), invite.device_name.clone()))
+                    }
+                }
+                _ => Err(gone),
+            }
         };
-        if invite.invite_id != *id {
-            return Err(gone);
-        }
-        if invite.is_expired(pair::now_secs()) {
-            self.clear_invite(&mut current);
-            return Err("this invite has expired".into());
-        }
-        if invite.attempts_left == 0 {
-            self.clear_invite(&mut current);
-            return Err("this invite is used up".into());
-        }
-        // Decrement before any work (PAIRING.md section 4, step 4).
-        invite.attempts_left -= 1;
-        if let Err(e) = self.inner.storage.invite_changed(id, Some(invite)) {
+        self.persist_cleared(cleared);
+        if let Some(invite) = to_save
+            && let Err(e) = self.inner.storage.invite_changed(id, Some(&invite))
+        {
             eprintln!("warning: could not save the invite's attempt count: {e:#}");
         }
-        Ok((invite.code(), invite.device_name.clone()))
+        result
     }
 
     /// Records a wrong code for invite `id`. Returns its attempts left and
@@ -500,29 +572,36 @@ impl Agent {
     /// this handshake ran), the active one is left alone (W-1) and 0 is
     /// returned: the old invite is gone either way.
     fn failed_attempt(&self, id: &[u8; 16]) -> u8 {
-        let mut current = self.inner.invite.lock().expect("invite poisoned");
-        match current.as_ref() {
-            Some(invite) if invite.invite_id == *id => {
-                let left = invite.attempts_left;
-                if left == 0 {
-                    self.clear_invite(&mut current);
+        let (left, cleared) = {
+            let mut current = self.inner.invite.lock().expect("invite poisoned");
+            match current.as_ref() {
+                Some(invite) if invite.invite_id == *id => {
+                    let left = invite.attempts_left;
+                    let cleared = if left == 0 {
+                        self.clear_invite(&mut current)
+                    } else {
+                        None
+                    };
+                    (left, cleared)
                 }
-                left
+                _ => (0, None),
             }
-            _ => 0,
-        }
+        };
+        self.persist_cleared(cleared);
+        left
     }
 
     /// Consumes invite `id` and adds `device` to the allow-list.
     fn complete_pairing(&self, id: &[u8; 16], device: Device) -> Result<()> {
-        {
+        let cleared = {
             let mut current = self.inner.invite.lock().expect("invite poisoned");
             anyhow::ensure!(
                 current.as_ref().is_some_and(|i| i.invite_id == *id),
                 "the invite was replaced during pairing"
             );
-            self.clear_invite(&mut current);
-        }
+            self.clear_invite(&mut current)
+        };
+        self.persist_cleared(cleared);
         self.inner.storage.device_paired(&device)?;
         let mut list = self.devices();
         list.upsert(device);
@@ -592,6 +671,85 @@ impl Agent {
         eprintln!("paired with {} ({fp})", crate::display_safe(&name));
         let _ = tokio::time::timeout(Duration::from_secs(5), conn.closed()).await;
         Ok(())
+    }
+}
+
+/// How often [`watch`] re-reads the allow-list file.
+pub const DEVICES_POLL: Duration = Duration::from_millis(500);
+/// How often [`watch`] looks for a new invite (and expires the old one).
+pub const INVITE_POLL: Duration = Duration::from_secs(2);
+
+/// Lets the commands that run as separate processes reach a running agent:
+/// `pigeon-agent revoke` edits `devices_path` (picked up within
+/// [`DEVICES_POLL`], live connections of removed devices are closed), and
+/// `pigeon-agent pair` stores an invite that `load_invite` returns (picked
+/// up within [`INVITE_POLL`]). Runs until the task is dropped.
+pub async fn watch<F>(agent: Agent, devices_path: PathBuf, load_invite: F)
+where
+    F: Fn() -> Result<Option<Invite>> + Send + Sync + 'static,
+{
+    let load_invite = Arc::new(load_invite);
+    let invite_every = (INVITE_POLL.as_millis() / DEVICES_POLL.as_millis()).max(1) as u64;
+    let mut known = agent.devices();
+    let mut tick = 0u64;
+    let mut warned = false;
+    let mut reported_other: Option<[u8; 16]> = None;
+    loop {
+        tokio::time::sleep(DEVICES_POLL).await;
+        tick += 1;
+        match DeviceList::load(&devices_path) {
+            Ok(list) if list != known => {
+                for d in &known.devices {
+                    if !list.contains(&d.id) {
+                        eprintln!(
+                            "revoked {} ({})",
+                            crate::display_safe(&d.name),
+                            crate::fingerprint(&d.id)
+                        );
+                    }
+                }
+                agent.set_devices(list);
+                warned = false;
+            }
+            Ok(_) => {}
+            Err(e) if !warned => {
+                // Keep the last good list; a broken file must not open access.
+                eprintln!("warning: {e:#}; keeping the previous device list");
+                warned = true;
+            }
+            Err(_) => {}
+        }
+        // Pairing in this process may have changed the list too.
+        known = agent.devices();
+        if !tick.is_multiple_of(invite_every) {
+            continue;
+        }
+        agent.expire_invite();
+        // Keystore reads can block (or prompt): keep them off the runtime.
+        let load = load_invite.clone();
+        let loaded = match tokio::task::spawn_blocking(move || load()).await {
+            Ok(r) => r,
+            Err(e) => Err(anyhow::anyhow!("invite reader panicked: {e}")),
+        };
+        match loaded {
+            Ok(Some(invite)) => {
+                let id = invite.invite_id;
+                match agent.offer_invite(invite) {
+                    Offer::Activated => eprintln!("a new pairing invite is active"),
+                    Offer::OtherAgent if reported_other != Some(id) => {
+                        eprintln!(
+                            "a pairing invite was made for a different agent key (after \
+                             `pigeon-agent reset`?). Stop this agent (Ctrl+C), start \
+                             `pigeon-agent share` again, then run `pigeon-agent pair` again."
+                        );
+                        reported_other = Some(id);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("warning: could not read the pairing invite: {e:#}"),
+        }
     }
 }
 

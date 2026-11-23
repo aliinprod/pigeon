@@ -12,14 +12,14 @@
 //! The agent only connects outward (to the iroh relay); it does not open any
 //! listening socket of its own beyond the UDP sockets iroh uses.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, endpoint::presets};
 use pigeon_core::{
-    agent::{Agent, AgentStorage, ServeOptions},
-    config::Home,
+    agent::{self, Agent, AgentStorage, Offer, ServeOptions},
+    config::{Home, display_path},
     devices::{DEVICES_FILE, Device, DeviceList},
     display_safe, fingerprint,
     keystore::{AGENT_KEY, SecretStore},
@@ -32,6 +32,11 @@ const INVITE_SECRET: &str = "invite";
 /// Non-secret status file: the running agent's ID and relay, so `pair` can
 /// put a relay hint in the link without starting a second endpoint.
 const STATUS_FILE: &str = "agent-status.json";
+/// Non-secret list of invite IDs that were used, burned, expired or replaced
+/// (W-5): a stale keystore copy can never come back after a restart.
+const SPENT_FILE: &str = "spent-invites.json";
+/// How many spent invite IDs to remember (oldest dropped first).
+const SPENT_KEEP: usize = 256;
 
 #[derive(Parser)]
 #[command(name = "pigeon-agent", version, about = "Share a folder with Pigeon")]
@@ -46,7 +51,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Share DIR (read-only) with paired devices. Keep it running.
-    Share { dir: PathBuf },
+    Share {
+        /// The folder to share (read-only).
+        dir: PathBuf,
+    },
     /// Create a single-use pairing invite for one new device.
     Pair {
         /// Name for the device you are pairing, e.g. "Home PC".
@@ -59,7 +67,10 @@ enum Command {
     /// List paired devices.
     Devices,
     /// Remove a paired device (by name or fingerprint).
-    Revoke { device: String },
+    Revoke {
+        /// Device name or fingerprint, as shown by `pigeon-agent devices`.
+        device: String,
+    },
     /// Create a new agent key and forget every paired device.
     Reset {
         /// Confirm: every paired device has to pair again.
@@ -93,13 +104,28 @@ struct Storage {
     store: Box<dyn SecretStore>,
 }
 
+impl Storage {
+    fn spent_path(&self) -> PathBuf {
+        self.home.dir.join(SPENT_FILE)
+    }
+
+    fn load_spent(&self) -> Result<VecDeque<String>> {
+        match std::fs::read(self.spent_path()) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .with_context(|| format!("{SPENT_FILE} is damaged; fix or delete it")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(VecDeque::new()),
+            Err(e) => Err(e).context(format!("could not read {SPENT_FILE}")),
+        }
+    }
+}
+
 impl AgentStorage for Storage {
     fn device_paired(&self, device: &Device) -> Result<()> {
-        // Read-modify-write, so a `revoke` made meanwhile is not undone.
-        let path = self.home.dir.join(DEVICES_FILE);
-        let mut list = DeviceList::load(&path)?;
-        list.upsert(device.clone());
-        list.save(&path)
+        // Locked read-modify-write, so a `revoke` made meanwhile is not undone (W-4).
+        DeviceList::update(&self.home.dir.join(DEVICES_FILE), |list| {
+            list.upsert(device.clone());
+            Ok(())
+        })
     }
 
     fn invite_changed(&self, invite_id: &[u8; 16], invite: Option<&Invite>) -> Result<()> {
@@ -116,6 +142,30 @@ impl AgentStorage for Storage {
             None => self.store.delete(INVITE_SECRET),
         }
     }
+
+    fn invite_spent(&self, invite_id: &[u8; 16]) -> Result<()> {
+        let id = pigeon_core::hex(invite_id);
+        let mut spent = self.load_spent()?;
+        if !spent.contains(&id) {
+            spent.push_back(id);
+            while spent.len() > SPENT_KEEP {
+                spent.pop_front();
+            }
+            pigeon_core::config::write_private(&self.spent_path(), &serde_json::to_vec(&spent)?)?;
+        }
+        Ok(())
+    }
+
+    fn is_spent(&self, invite_id: &[u8; 16]) -> bool {
+        match self.load_spent() {
+            Ok(spent) => spent.contains(&pigeon_core::hex(invite_id)),
+            Err(e) => {
+                // Fail closed: no pairing until the record is readable again.
+                eprintln!("warning: {e:#}; refusing pairing invites until it is fixed");
+                true
+            }
+        }
+    }
 }
 
 fn load_invite(store: &dyn SecretStore) -> Result<Option<Invite>> {
@@ -125,11 +175,14 @@ fn load_invite(store: &dyn SecretStore) -> Result<Option<Invite>> {
     }
 }
 
+const OTHER_KEY_HINT: &str = "the stored pairing invite was made for a different agent key \
+     (after `pigeon-agent reset`?); run `pigeon-agent pair` again";
+
 async fn share(home: Home, dir: PathBuf, verbose: bool) -> Result<()> {
     let root = dir
         .canonicalize()
         .with_context(|| format!("folder not found: {}", dir.display()))?;
-    anyhow::ensure!(root.is_dir(), "not a folder: {}", root.display());
+    anyhow::ensure!(root.is_dir(), "not a folder: {}", display_path(&root));
 
     // A stable device identity: the same endpoint ID after every restart.
     let (key, store, created) = home.device_key(AGENT_KEY)?;
@@ -170,12 +223,14 @@ async fn share(home: Home, dir: PathBuf, verbose: bool) -> Result<()> {
         },
         Box::new(storage),
     );
-    if let Some(invite) = load_invite(store.as_ref())? {
-        agent.offer_invite(invite);
+    if let Some(invite) = load_invite(store.as_ref())?
+        && agent.offer_invite(invite) == Offer::OtherAgent
+    {
+        eprintln!("note: {OTHER_KEY_HINT}");
     }
     eprintln!(
         "sharing {} with {} paired device(s) (Ctrl+C to stop)",
-        root.display(),
+        display_path(&root),
         devices.devices.len()
     );
     if devices.devices.is_empty() && !agent.invite_active() {
@@ -185,8 +240,9 @@ async fn share(home: Home, dir: PathBuf, verbose: bool) -> Result<()> {
         eprintln!("a pairing invite is active");
     }
 
-    let store: Arc<dyn SecretStore> = Arc::from(store);
-    let watcher = tokio::spawn(watch(agent.clone(), home.clone(), store));
+    let watcher = tokio::spawn(agent::watch(agent.clone(), devices_path, move || {
+        load_invite(store.as_ref())
+    }));
     tokio::select! {
         res = agent.serve() => res?,
         _ = tokio::signal::ctrl_c() => eprintln!("stopping"),
@@ -194,53 +250,6 @@ async fn share(home: Home, dir: PathBuf, verbose: bool) -> Result<()> {
     watcher.abort();
     endpoint.close().await;
     Ok(())
-}
-
-/// Picks up changes made by the other commands while `share` runs:
-/// `revoke` (devices file, every 500 ms) and `pair` (invite, every 2 s).
-async fn watch(agent: Agent, home: Home, store: Arc<dyn SecretStore>) {
-    let devices_path = home.dir.join(DEVICES_FILE);
-    let mut known = agent.devices();
-    let mut tick = 0u64;
-    let mut warned = false;
-    loop {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        tick += 1;
-        match DeviceList::load(&devices_path) {
-            Ok(list) if list != known => {
-                for d in &known.devices {
-                    if !list.contains(&d.id) {
-                        eprintln!("revoked {} ({})", display_safe(&d.name), fingerprint(&d.id));
-                    }
-                }
-                agent.set_devices(list);
-                warned = false;
-            }
-            Ok(_) => {}
-            Err(e) if !warned => {
-                // Keep the last good list; a broken file must not open access.
-                eprintln!("warning: {e:#}; keeping the previous device list");
-                warned = true;
-            }
-            Err(_) => {}
-        }
-        // Pairing in this process may have changed the list too.
-        known = agent.devices();
-        if tick.is_multiple_of(4) {
-            agent.expire_invite();
-            match load_invite(store.as_ref()) {
-                Ok(Some(invite)) => {
-                    let was_active = agent.invite_active();
-                    agent.offer_invite(invite);
-                    if !was_active && agent.invite_active() {
-                        eprintln!("a new pairing invite is active");
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => eprintln!("warning: could not read the pairing invite: {e:#}"),
-            }
-        }
-    }
 }
 
 fn write_status(home: &Home, addr: &EndpointAddr) {
@@ -267,14 +276,22 @@ fn pair_cmd(home: Home, name: Option<String>, ttl_hours: u64) -> Result<()> {
     let mut addr = EndpointAddr::new(id);
     if let Ok(bytes) = std::fs::read(home.dir.join(STATUS_FILE))
         && let Ok(status) = serde_json::from_slice::<Status>(&bytes)
-        && status.id == id
-        && let Some(url) = status.relay_url
     {
-        addr = addr.with_relay_url(url);
+        if status.id != id {
+            // M1: `share` started with another key (e.g. before a `reset`).
+            eprintln!(
+                "warning: a `pigeon-agent share` that started with another key ({}) may still \
+                 be running; stop it and start it again, or this invite will not work.",
+                fingerprint(&status.id)
+            );
+        } else if let Some(url) = status.relay_url {
+            addr = addr.with_relay_url(url);
+        }
     }
     let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     let ttl = Duration::from_secs(ttl_hours * 3600);
     let (invite, code) = Invite::new(ttl, pair::now_secs(), name.clone())?;
+    let invite = invite.for_agent(id);
     // A new invite replaces the old one (only one at a time).
     store.set(INVITE_SECRET, &invite.to_secret_bytes()?[..])?;
     let link = invite.link(addr);
@@ -326,10 +343,7 @@ fn ago(now: u64, then: u64) -> String {
 }
 
 fn revoke_cmd(home: &Home, query: &str) -> Result<()> {
-    let path = home.dir.join(DEVICES_FILE);
-    let mut list = DeviceList::load(&path)?;
-    let gone = list.remove(query)?;
-    list.save(&path)?;
+    let gone = DeviceList::update(&home.dir.join(DEVICES_FILE), |list| list.remove(query))?;
     println!(
         "revoked {} ({}). A running agent drops its connections within a second.",
         display_safe(&gone.name),
@@ -353,7 +367,12 @@ fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
             Err(e) => return Err(e).context(format!("could not remove {file}")),
         }
     }
-    println!("reset done: the next `pigeon-agent share` makes a new key; pair your devices again.");
+    println!("reset done: every paired device was forgotten.");
+    // M1: a running `share` keeps the old key in memory.
+    println!(
+        "If `pigeon-agent share` is running, stop it (Ctrl+C) and start it again now: it still \
+         uses the old key, so new invites would not work with it. Then pair your devices again."
+    );
     Ok(())
 }
 
@@ -362,14 +381,17 @@ mod tests {
     use super::*;
     use pigeon_core::keystore::MemoryStore;
 
+    fn storage(dir: &std::path::Path) -> Storage {
+        Storage {
+            home: Home::at(dir.to_path_buf()).unwrap(),
+            store: Box::new(MemoryStore::default()),
+        }
+    }
+
     #[test]
     fn storage_never_overwrites_a_newer_invite() {
         let dir = tempfile::tempdir().unwrap();
-        let home = Home::at(dir.path().to_path_buf()).unwrap();
-        let storage = Storage {
-            home,
-            store: Box::new(MemoryStore::default()),
-        };
+        let storage = storage(dir.path());
         let (old, _) = Invite::new(pair::DEFAULT_TTL, 1, None).unwrap();
         let (new, _) = Invite::new(pair::DEFAULT_TTL, 1, None).unwrap();
         storage
@@ -391,12 +413,8 @@ mod tests {
     #[test]
     fn device_paired_keeps_a_concurrent_revoke() {
         let dir = tempfile::tempdir().unwrap();
-        let home = Home::at(dir.path().to_path_buf()).unwrap();
-        let path = home.dir.join(DEVICES_FILE);
-        let storage = Storage {
-            home,
-            store: Box::new(MemoryStore::default()),
-        };
+        let storage = storage(dir.path());
+        let path = storage.home.dir.join(DEVICES_FILE);
         let dev = |seed: u8, name: &str| Device {
             id: iroh::SecretKey::from_bytes(&[seed; 32]).public(),
             name: name.into(),
@@ -405,9 +423,7 @@ mod tests {
         storage.device_paired(&dev(1, "a")).unwrap();
         storage.device_paired(&dev(2, "b")).unwrap();
         // `revoke a` from another process edits the file...
-        let mut list = DeviceList::load(&path).unwrap();
-        list.remove("a").unwrap();
-        list.save(&path).unwrap();
+        DeviceList::update(&path, |list| list.remove("a").map(|_| ())).unwrap();
         // ...and a later pairing in the running agent must not bring it back.
         storage.device_paired(&dev(3, "c")).unwrap();
         let names: Vec<_> = DeviceList::load(&path)
@@ -417,5 +433,20 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert_eq!(names, ["b", "c"]);
+    }
+
+    /// W-5: spent invite IDs survive a restart (a new Storage on the same
+    /// home), and an unreadable record fails closed.
+    #[test]
+    fn spent_invites_are_remembered_and_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, _) = Invite::new(pair::DEFAULT_TTL, 1, None).unwrap();
+        let (b, _) = Invite::new(pair::DEFAULT_TTL, 1, None).unwrap();
+        storage(dir.path()).invite_spent(&a.invite_id).unwrap();
+        let after_restart = storage(dir.path());
+        assert!(after_restart.is_spent(&a.invite_id));
+        assert!(!after_restart.is_spent(&b.invite_id));
+        std::fs::write(dir.path().join(SPENT_FILE), b"{ broken").unwrap();
+        assert!(after_restart.is_spent(&b.invite_id), "must fail closed");
     }
 }

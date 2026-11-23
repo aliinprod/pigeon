@@ -252,6 +252,19 @@ mod winacl {
     }
 }
 
+/// A path for people to read: on Windows without the `\\?\` prefix that
+/// `canonicalize` adds (N6).
+pub fn display_path(path: &Path) -> String {
+    let s = path.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s
+    }
+}
+
 /// The current Windows user's SID (for tests and diagnostics).
 #[cfg(windows)]
 pub fn current_user_sid() -> Result<String> {
@@ -384,6 +397,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn display_path_drops_the_verbatim_prefix() {
+        assert_eq!(display_path(Path::new(r"\\?\C:\Users\x")), r"C:\Users\x");
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\srv\share")),
+            r"\\srv\share"
+        );
+        assert_eq!(display_path(Path::new("/Users/x")), "/Users/x");
     }
 
     #[test]

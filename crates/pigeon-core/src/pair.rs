@@ -159,6 +159,9 @@ pub struct Invite {
     pub attempts_left: u8,
     /// Name the owner gave the device being paired (`pair --name`).
     pub device_name: Option<String>,
+    /// The agent key this invite was made for (`None` in tests). A running
+    /// agent with another key ignores it (M1).
+    pub agent: Option<EndpointId>,
 }
 
 impl Drop for Invite {
@@ -175,6 +178,7 @@ impl fmt::Debug for Invite {
             .field("expires_at", &self.expires_at)
             .field("attempts_left", &self.attempts_left)
             .field("device_name", &self.device_name)
+            .field("agent", &self.agent)
             .finish()
     }
 }
@@ -196,8 +200,15 @@ impl Invite {
             expires_at: now.saturating_add(ttl.as_secs()),
             attempts_left: ATTEMPTS,
             device_name,
+            agent: None,
         };
         Ok((invite, code))
+    }
+
+    /// Binds the invite to the agent key `id`.
+    pub fn for_agent(mut self, id: EndpointId) -> Self {
+        self.agent = Some(id);
+        self
     }
 
     pub fn is_expired(&self, now: u64) -> bool {

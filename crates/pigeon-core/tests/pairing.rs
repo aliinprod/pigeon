@@ -5,14 +5,19 @@
 
 mod common;
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use common::*;
 use iroh::Endpoint;
 use pigeon_core::{
     PAIR_ALPN,
-    agent::ServeOptions,
+    agent::{self, Agent, AgentStorage, Offer, ServeOptions},
     client,
+    devices::{Device, DeviceList},
     pair::{
         self, AgentMsg, DEFAULT_TTL, Invite, InviteLink, MAX_PAIR_FRAME, PAIR_VERSION, PairConfirm,
         PairStart, PairingCode,
@@ -491,4 +496,127 @@ async fn client_refuses_an_agent_that_cannot_prove_the_code() {
         "unexpected error: {err:#}"
     );
     server.abort();
+}
+
+/// M1 (Proof): after `pigeon-agent reset` the next invite is made for the
+/// new key. A `share` still running with the old key must ignore it (and
+/// say so) instead of advertising an invite nobody can use.
+#[tokio::test(flavor = "multi_thread")]
+async fn invite_for_another_agent_key_is_ignored() {
+    let s = setup_with(ServeOptions::default(), false).await;
+    let other_key = iroh::SecretKey::from_bytes(&[42; 32]).public();
+    let (invite, _) = Invite::new(DEFAULT_TTL, pair::now_secs(), None).unwrap();
+    assert_eq!(
+        s.agent.offer_invite(invite.for_agent(other_key)),
+        Offer::OtherAgent
+    );
+    assert!(!s.agent.invite_active());
+    // An invite made for this agent's key is taken.
+    let (invite, _) = Invite::new(DEFAULT_TTL, pair::now_secs(), None).unwrap();
+    let mine = invite.for_agent(s.agent.endpoint().id());
+    assert_eq!(s.agent.offer_invite(mine), Offer::Activated);
+    shutdown(s).await;
+}
+
+/// Shared "disk" for the restart test below.
+#[derive(Default, Clone)]
+struct RememberingStorage {
+    spent: Arc<Mutex<HashSet<[u8; 16]>>>,
+}
+
+impl AgentStorage for RememberingStorage {
+    fn device_paired(&self, _: &Device) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn invite_changed(&self, _: &[u8; 16], _: Option<&Invite>) -> anyhow::Result<()> {
+        // Simulates a keystore delete that keeps failing (locked Keychain).
+        anyhow::bail!("keystore locked")
+    }
+    fn invite_spent(&self, id: &[u8; 16]) -> anyhow::Result<()> {
+        self.spent.lock().unwrap().insert(*id);
+        Ok(())
+    }
+    fn is_spent(&self, id: &[u8; 16]) -> bool {
+        self.spent.lock().unwrap().contains(id)
+    }
+}
+
+/// W-5 (Warden): a used invite whose keystore copy could not be deleted must
+/// not come back after the agent restarts.
+#[tokio::test(flavor = "multi_thread")]
+async fn used_invite_does_not_come_back_after_a_restart() {
+    let disk = RememberingStorage::default();
+    let dir = tempfile::tempdir().unwrap();
+    let start_agent = |ep: Endpoint| {
+        let agent = Agent::new(
+            ep,
+            dir.path().to_path_buf(),
+            DeviceList::default(),
+            ServeOptions::default(),
+            Box::new(disk.clone()),
+        );
+        let serving = agent.clone();
+        tokio::spawn(async move { serving.serve().await });
+        agent
+    };
+    let ep = local_endpoint(vec![]).await;
+    let addr = addr_of(&ep);
+    let agent = start_agent(ep);
+    let (invite, code) = Invite::new(DEFAULT_TTL, pair::now_secs(), None).unwrap();
+    let link = invite.link(addr);
+    agent.offer_invite(invite.clone());
+    let client = new_client().await;
+    within(pair::pair(&client, &link, &code)).await.unwrap();
+    agent.endpoint().close().await;
+
+    // "Restart": a new agent on the same storage; the keystore still holds
+    // the invite (its delete failed), and `share` offers it again.
+    let restarted = start_agent(local_endpoint(vec![]).await);
+    assert_eq!(restarted.offer_invite(invite), Offer::Spent);
+    assert!(!restarted.invite_active());
+    client.close().await;
+    restarted.endpoint().close().await;
+}
+
+/// W-8 / SEC-08: the path users really take. `pigeon-agent revoke` edits
+/// devices.json; the running agent's `watch` loop picks it up and closes the
+/// device's live transfer within 1.5 s.
+#[tokio::test(flavor = "multi_thread")]
+async fn revoke_through_the_devices_file_closes_a_live_transfer() {
+    let s = setup().await;
+    let devices_path = s.work.join("devices.json");
+    s.agent.devices().save(&devices_path).unwrap();
+    let watcher = tokio::spawn(agent::watch(s.agent.clone(), devices_path.clone(), || {
+        Ok(None)
+    }));
+    write_random_file(&s.root.join("big.bin"), 48 * 1024 * 1024);
+    let req = Request::Get {
+        path: "big.bin".into(),
+        offset: 0,
+    };
+    let (conn, mut recv) = raw_request(&s.client, &s.addr, &req).await;
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut got = 0;
+    while got < 1024 * 1024 {
+        got += within(recv.read(&mut buf))
+            .await
+            .unwrap()
+            .expect("stream ended early");
+    }
+    // What `pigeon-agent revoke "test client"` does:
+    let started = Instant::now();
+    DeviceList::update(&devices_path, |list| list.remove("test client").map(|_| ())).unwrap();
+    tokio::time::timeout(Duration::from_millis(1500), conn.closed())
+        .await
+        .expect("revoke through the file did not close the transfer within 1.5 s");
+    println!(
+        "file revoke closed the transfer after {:?}",
+        started.elapsed()
+    );
+    let err = within(client::list(&s.client, &s.addr, ""))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("not paired"), "{err:#}");
+    watcher.abort();
+    shutdown(s).await;
 }

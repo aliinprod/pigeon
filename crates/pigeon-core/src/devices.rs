@@ -6,7 +6,10 @@
 //! Not secret (public keys and names), but integrity matters: written
 //! owner-only and atomically ([`crate::config::write_private`]).
 
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
 use iroh::{EndpointAddr, EndpointId, RelayUrl};
@@ -108,9 +111,71 @@ fn find<'a, T>(
     }
 }
 
+/// Holds `<file>.lock` while a read-modify-write runs, so `pigeon-agent
+/// revoke` (one process) and a pairing that completes in `share` (another)
+/// cannot undo each other's change (W-4). A lock older than 30 s is from a
+/// crashed process and is taken over.
+pub struct FileLock {
+    path: PathBuf,
+}
+
+impl FileLock {
+    pub fn acquire(target: &Path) -> Result<Self> {
+        let mut name = target.file_name().context("no file name")?.to_owned();
+        name.push(".lock");
+        let path = target.with_file_name(name);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Self { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age > Duration::from_secs(30));
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if Instant::now() > deadline {
+                        bail!(
+                            "{} is busy (another pigeon-agent command is changing it); try again",
+                            target.display()
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| format!("could not lock {}", target.display()));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 impl DeviceList {
     pub fn load(path: &Path) -> Result<Self> {
         load(path)
+    }
+
+    /// Locked read-modify-write of the allow-list file (W-4).
+    pub fn update<T>(path: &Path, f: impl FnOnce(&mut DeviceList) -> Result<T>) -> Result<T> {
+        let _lock = FileLock::acquire(path)?;
+        let mut list = Self::load(path)?;
+        let out = f(&mut list)?;
+        list.save(path)?;
+        Ok(out)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -212,6 +277,32 @@ mod tests {
         let gone = list.remove("laptop").unwrap();
         assert_eq!(gone.name, "Laptop");
         assert!(!list.contains(&gone.id));
+    }
+
+    /// W-4: concurrent locked updates (two "processes") never lose a change.
+    #[test]
+    fn concurrent_updates_lose_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(DEVICES_FILE);
+        let threads: Vec<_> = (0..2u8)
+            .map(|t| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..25u8 {
+                        DeviceList::update(&path, |list| {
+                            list.upsert(device(1 + t * 100 + i, &format!("{t}-{i}")));
+                            Ok(())
+                        })
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(DeviceList::load(&path).unwrap().devices.len(), 50);
+        assert!(!dir.path().join("devices.json.lock").exists());
     }
 
     #[test]
