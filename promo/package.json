@@ -1,0 +1,25 @@
+{
+  "name": "pigeon-promo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pigeon promo videos (Remotion)",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render:16x9": "remotion render src/index.ts Promo16x9 out/pigeon-promo-16x9.mp4 --codec=h264",
+    "render:1x1": "remotion render src/index.ts Promo1x1 out/pigeon-promo-1x1.mp4 --codec=h264",
+    "render": "npm run render:16x9 && npm run render:1x1",
+    "contact": "remotion still src/index.ts Contact16x9 out/contact-16x9.png && remotion still src/index.ts Contact1x1 out/contact-1x1.png",
+    "stills": "node scripts/contact-sheet.mjs 16x9 && node scripts/contact-sheet.mjs 1x1"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.542",
+    "@remotion/google-fonts": "4.0.542",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.542"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}
