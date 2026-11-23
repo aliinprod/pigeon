@@ -150,7 +150,8 @@ jobs:
         run: |
           ticket=$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/ticket")
           echo "::add-mask::$ticket"
-          target/release/pigeon.exe ls "$ticket"
+          # Via the environment, never as an argument (TH-14).
+          PIGEON_TICKET="$ticket" target/release/pigeon.exe ls
           {
             echo "### Cross-network transfer (agent: macOS runner, client: Windows runner)"
             echo

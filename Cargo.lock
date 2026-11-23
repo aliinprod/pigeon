@@ -2138,6 +2138,7 @@ dependencies = [
  "clap",
  "iroh",
  "pigeon-core",
+ "tempfile",
  "tokio",
 ]
 

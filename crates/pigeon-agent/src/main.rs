@@ -10,12 +10,15 @@ use clap::{Parser, Subcommand};
 use iroh::{Endpoint, endpoint::presets};
 use pigeon_core::{
     ALPN, Ticket,
-    agent::{Share, serve},
+    agent::{ServeOptions, Share, serve},
 };
 
 #[derive(Parser)]
 #[command(name = "pigeon-agent", version, about = "Share a folder with Pigeon")]
 struct Cli {
+    /// Print details of failed connection attempts.
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -29,6 +32,7 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let Cli {
+        verbose,
         command: Command::Share { dir },
     } = Cli::parse();
     let root = dir
@@ -61,7 +65,7 @@ async fn main() -> Result<()> {
         token: ticket.token,
     };
     tokio::select! {
-        res = serve(endpoint.clone(), share) => res?,
+        res = serve(endpoint.clone(), share, ServeOptions { verbose, ..Default::default() }) => res?,
         _ = tokio::signal::ctrl_c() => eprintln!("stopping"),
     }
     endpoint.close().await;

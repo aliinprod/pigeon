@@ -4,12 +4,17 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-use iroh::{Endpoint, EndpointAddr, endpoint::presets};
+use iroh::{
+    Endpoint, EndpointAddr,
+    endpoint::{Connection, presets},
+};
+use pigeon_core::proto::{Hello, PROTOCOL_VERSION, Request, Response, read_frame, write_frame};
 use pigeon_core::{
     ALPN, Ticket,
-    agent::{Share, serve, sha256_file},
+    agent::{Limits, ServeOptions, Share, serve, sha256_file},
     client,
 };
 
@@ -34,6 +39,10 @@ struct Setup {
 }
 
 async fn setup() -> Setup {
+    setup_with(ServeOptions::default()).await
+}
+
+async fn setup_with(opts: ServeOptions) -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("share");
     let work = dir.path().join("work");
@@ -58,6 +67,7 @@ async fn setup() -> Setup {
             root: root.clone(),
             token,
         },
+        opts,
     ));
     Setup {
         _dir: dir,
@@ -301,6 +311,153 @@ async fn oversized_hello_from_stranger_is_refused_and_agent_keeps_serving() {
     let entries = within(client::list(&s.client, &s.ticket, ""))
         .await
         .unwrap();
+    assert!(entries.iter().any(|e| e.name == "a.txt"));
+    shutdown(s).await;
+}
+
+// ---- Connection limits and idle timeouts (SEC-18, TH-08) ----
+
+fn short_limits(max_connections: usize, max_per_peer: usize) -> ServeOptions {
+    ServeOptions {
+        limits: Limits {
+            max_connections,
+            max_per_peer,
+            handshake_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(1),
+        },
+        verbose: true,
+    }
+}
+
+/// Sends hello + `req` on a fresh connection and returns it without closing.
+async fn raw_request(s: &Setup, req: &Request) -> (Connection, iroh::endpoint::RecvStream) {
+    let conn = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    let (mut send, recv) = conn.open_bi().await.unwrap();
+    let hello = Hello {
+        version: PROTOCOL_VERSION,
+        token: s.ticket.token,
+    };
+    write_frame(&mut send, &hello).await.unwrap();
+    write_frame(&mut send, req).await.unwrap();
+    send.finish().unwrap();
+    (conn, recv)
+}
+
+/// Retries `list` until the agent has freed a slot (it notices closed
+/// connections asynchronously).
+async fn list_eventually(s: &Setup) -> Vec<pigeon_core::proto::Entry> {
+    within(async {
+        loop {
+            if let Ok(entries) = client::list(&s.client, &s.ticket, "").await {
+                return entries;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn per_peer_connection_limit_closes_extra_connections() {
+    let s = setup_with(short_limits(32, 2)).await;
+    std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
+    // Two connections that send nothing yet and just sit there.
+    let held1 = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    let held2 = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    // The third one from the same peer is closed by the agent as "busy".
+    let extra = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    let reason = tokio::time::timeout(Duration::from_secs(5), extra.closed())
+        .await
+        .expect("agent kept a connection over the per-peer limit");
+    assert!(format!("{reason}").contains("busy"), "{reason}");
+    // Freeing a slot lets the peer in again.
+    held1.close(0u32.into(), b"bye");
+    let entries = list_eventually(&s).await;
+    assert!(entries.iter().any(|e| e.name == "a.txt"));
+    held2.close(0u32.into(), b"bye");
+    shutdown(s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn global_connection_limit_refuses_extra_connections() {
+    let s = setup_with(short_limits(2, 8)).await;
+    std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
+    let held1 = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    let held2 = within(s.client.connect(s.ticket.addr.clone(), ALPN))
+        .await
+        .unwrap();
+    // A third connection (from any peer) is refused before the handshake.
+    let other = local_endpoint(vec![]).await;
+    let res = tokio::time::timeout(
+        Duration::from_secs(10),
+        other.connect(s.ticket.addr.clone(), ALPN),
+    )
+    .await
+    .expect("refused connection attempt hung");
+    assert!(
+        res.is_err(),
+        "connection over the global limit was accepted"
+    );
+    held1.close(0u32.into(), b"bye");
+    let entries = list_eventually(&s).await;
+    assert!(entries.iter().any(|e| e.name == "a.txt"));
+    held2.close(0u32.into(), b"bye");
+    other.close().await;
+    shutdown(s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_client_is_disconnected_after_its_request() {
+    let s = setup_with(short_limits(32, 4)).await;
+    std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
+    let (conn, mut recv) = raw_request(
+        &s,
+        &Request::List {
+            path: String::new(),
+        },
+    )
+    .await;
+    let response: Response = within(read_frame(&mut recv)).await.unwrap();
+    assert!(matches!(response, Response::List(_)), "{response:?}");
+    // We never close. The agent must not wait on us forever.
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(5), conn.closed())
+        .await
+        .expect("agent kept an idle authenticated connection open");
+    println!(
+        "idle connection closed by the agent after {:?}",
+        started.elapsed()
+    );
+    shutdown(s).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stalled_reader_is_disconnected() {
+    let s = setup_with(short_limits(32, 4)).await;
+    write_random_file(&s.root.join("big.bin"), 48 * 1024 * 1024);
+    let req = Request::Get {
+        path: "big.bin".into(),
+        offset: 0,
+    };
+    // Ask for 48 MiB and never read a byte: flow control stalls the agent's
+    // writes, and the idle timeout must cut the connection.
+    let (conn, _recv) = raw_request(&s, &req).await;
+    tokio::time::timeout(Duration::from_secs(20), conn.closed())
+        .await
+        .expect("agent kept writing to a peer that never reads");
+    // The agent keeps serving others.
+    std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
+    let entries = list_eventually(&s).await;
     assert!(entries.iter().any(|e| e.name == "a.txt"));
     shutdown(s).await;
 }

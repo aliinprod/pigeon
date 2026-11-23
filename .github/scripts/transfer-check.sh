@@ -43,7 +43,7 @@ rm -f "$out" "$out.part"
 log="$mode.log"
 
 start=$(date +%s%N)
-"$pigeon" ${flags[@]+"${flags[@]}"} get "$ticket" "$remote" -o "$out" | tee "$log"
+"$pigeon" ${flags[@]+"${flags[@]}"} --ticket-file "$ticket_file" get "$remote" -o "$out" | tee "$log"
 end=$(date +%s%N)
 
 actual=$(sha256 "$out")

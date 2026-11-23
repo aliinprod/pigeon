@@ -59,10 +59,14 @@ mod tests {
 
     #[test]
     fn debug_never_prints_the_token() {
+        // A fixed key: a random one's hex can contain "171" or "abab" by
+        // chance, which made this test flaky (~1.5% of runs).
+        let key = SecretKey::from_bytes(&[1; 32]).public();
         let t = Ticket {
-            addr: EndpointAddr::new(SecretKey::generate().public()),
+            addr: EndpointAddr::new(key),
             token: [0xAB; 32],
         };
+        assert!(!format!("{key:?}").contains("171") && !key.to_string().contains("abab"));
         let dbg = format!("{t:?} {t:#?}");
         assert!(dbg.contains("<redacted>"), "{dbg}");
         assert!(!dbg.contains("171"), "token bytes leaked: {dbg}");

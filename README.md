@@ -27,11 +27,12 @@ Early builds are unsigned and come from GitHub Actions (repo access needed).
    ./pigeon-agent share ~/Documents/ForHome
    ```
    It prints a `ticket: pigeon...` line. Keep the agent running, and treat the ticket like a password: anyone with it can read that folder.
-3. **On Windows**, list and fetch:
+3. **On Windows**, save the ticket to a file (or paste it when asked), then list and fetch:
    ```powershell
-   .\pigeon.exe ls <TICKET>
-   .\pigeon.exe get <TICKET> report.pdf
+   .\pigeon.exe --ticket-file ticket.txt ls
+   .\pigeon.exe --ticket-file ticket.txt get report.pdf
    ```
+   The ticket is never a command-line argument, so it does not end up in your shell history. You can also set `$env:PIGEON_TICKET`, or run without either and paste it at the prompt.
    `get` resumes an interrupted download, checks the SHA-256, and never overwrites: if `report.pdf` exists it saves `report (1).pdf` and prints the final path.
    Add `--relay-only` to force the encrypted relay path (slower; for testing).
 

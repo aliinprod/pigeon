@@ -1,17 +1,28 @@
 //! `pigeon`: fetch files from a Pigeon agent.
 //!
-//! - `pigeon ls <TICKET> [PATH]`
-//! - `pigeon get <TICKET> <PATH> [-o OUT]`
+//! - `pigeon ls [PATH]`
+//! - `pigeon get <PATH> [-o OUT]`
+//!
+//! The ticket is a secret, so it is never a command-line argument (shell
+//! history, process list, clap error echo; TH-14). It is read from
+//! `--ticket-file FILE`, the `PIGEON_TICKET` environment variable, or one line
+//! on stdin, in that order.
 //!
 //! `--relay-only` disables direct (UDP hole-punched) paths, so every byte goes
 //! through the relay. Useful for testing the fallback path.
 
-use std::path::PathBuf;
+use std::{
+    io::{BufRead, IsTerminal, Write},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::{Endpoint, endpoint::presets};
 use pigeon_core::{Ticket, client};
+
+/// Environment variable that may hold the ticket.
+const TICKET_ENV: &str = "PIGEON_TICKET";
 
 #[derive(Parser)]
 #[command(name = "pigeon", version, about = "Your files know the way home.")]
@@ -19,6 +30,9 @@ struct Cli {
     /// Never use a direct connection; send everything through the relay.
     #[arg(long, global = true)]
     relay_only: bool,
+    /// Read the ticket from this file (otherwise $PIGEON_TICKET, otherwise stdin).
+    #[arg(long, global = true, value_name = "FILE")]
+    ticket_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -27,14 +41,12 @@ struct Cli {
 enum Command {
     /// List a folder on the agent.
     Ls {
-        ticket: Ticket,
         #[arg(default_value = "")]
         path: String,
     },
     /// Download one file (resumes from OUT.part if present). Never overwrites:
     /// if OUT exists, saves as "OUT (1)", "OUT (2)", ...
     Get {
-        ticket: Ticket,
         path: String,
         /// Output file (default: the file name from PATH, in the current folder).
         #[arg(short, long)]
@@ -49,10 +61,43 @@ async fn main() -> Result<()> {
     if cli.relay_only {
         builder = builder.clear_ip_transports();
     }
+    // Read the ticket before binding, so a bad ticket fails fast.
+    let text = read_secret("ticket", cli.ticket_file.as_deref(), TICKET_ENV)?;
+    let ticket: Ticket = text.parse()?;
     let endpoint = builder.bind().await?;
-    let result = run(&endpoint, cli.command, cli.relay_only).await;
+    let result = run(&endpoint, ticket, cli.command, cli.relay_only).await;
     endpoint.close().await;
     result
+}
+
+/// Reads a secret (`what`) from `file`, else the environment variable `env`,
+/// else one line on stdin (with a prompt on a terminal). The value is never
+/// echoed in errors.
+fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<String> {
+    let text = if let Some(file) = file {
+        std::fs::read_to_string(file)
+            .with_context(|| format!("could not read the {what} from {}", file.display()))?
+    } else if let Ok(v) = std::env::var(env) {
+        v
+    } else {
+        let stdin = std::io::stdin();
+        if stdin.is_terminal() {
+            eprint!("Paste the {what} and press Enter: ");
+            std::io::stderr().flush()?;
+        }
+        let mut line = String::new();
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .with_context(|| format!("could not read the {what} from stdin"))?;
+        line
+    };
+    let text = text.trim().to_string();
+    anyhow::ensure!(
+        !text.is_empty(),
+        "no {what} given: use --{what}-file, ${env} or stdin"
+    );
+    Ok(text)
 }
 
 /// In relay-only mode, drop the agent's direct addresses from the ticket so
@@ -104,10 +149,15 @@ fn default_out(path: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(safe))
 }
 
-async fn run(endpoint: &Endpoint, command: Command, relay_only: bool) -> Result<()> {
+async fn run(
+    endpoint: &Endpoint,
+    ticket: Ticket,
+    command: Command,
+    relay_only: bool,
+) -> Result<()> {
+    let ticket = prepare(ticket, relay_only);
     match command {
-        Command::Ls { ticket, path } => {
-            let ticket = prepare(ticket, relay_only);
+        Command::Ls { path } => {
             for e in client::list(endpoint, &ticket, &path).await? {
                 let kind = if e.is_dir { "dir " } else { "file" };
                 // Names come from the agent: never let them drive the terminal.
@@ -115,8 +165,7 @@ async fn run(endpoint: &Endpoint, command: Command, relay_only: bool) -> Result<
                 println!("{kind}  {:>14}  {:>10}  {name}", e.size, e.mtime);
             }
         }
-        Command::Get { ticket, path, out } => {
-            let ticket = prepare(ticket, relay_only);
+        Command::Get { path, out } => {
             let out = match out {
                 Some(out) => out,
                 None => default_out(&path)?,
@@ -164,6 +213,32 @@ mod tests {
         assert_eq!(relayed.addr.addrs.len(), 1);
         assert!(relayed.addr.addrs.iter().all(|a| a.is_relay()));
         assert_eq!(relayed.token, [7; 32]);
+    }
+
+    #[test]
+    fn ticket_is_read_from_a_file_and_never_echoed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("ticket.txt");
+        std::fs::write(&file, "  pigeonsecretticketbody \r\n").unwrap();
+        let text = read_secret("ticket", Some(&file), "PIGEON_TEST_UNSET_VAR").unwrap();
+        assert_eq!(text, "pigeonsecretticketbody");
+        // A ticket that does not parse must not show up in the error.
+        let err = format!("{:#}", text.parse::<Ticket>().unwrap_err());
+        assert!(!err.contains("secretticketbody"), "{err}");
+        // A missing file names the file, not any secret.
+        let err = read_secret("ticket", Some(&dir.path().join("nope")), "X").unwrap_err();
+        assert!(format!("{err:#}").contains("could not read the ticket"));
+    }
+
+    #[test]
+    fn ticket_is_not_a_command_line_argument() {
+        // `ls <TICKET>` from Day 1 is now `ls <PATH>`: the old form is taken as
+        // a path, so a ticket pasted there never reaches the parser or an error.
+        let cli = Cli::try_parse_from(["pigeon", "ls", "pigeonabc"]).unwrap();
+        assert!(matches!(cli.command, Command::Ls { path } if path == "pigeonabc"));
+        let cli =
+            Cli::try_parse_from(["pigeon", "--ticket-file", "t.txt", "get", "a.txt"]).unwrap();
+        assert_eq!(cli.ticket_file, Some(PathBuf::from("t.txt")));
     }
 
     #[test]
