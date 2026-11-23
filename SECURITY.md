@@ -6,9 +6,13 @@ Pigeon is **pre-release and has not been audited**. Builds are unsigned CI
 artifacts for testing. Do not use it to move files you cannot afford to leak,
 and follow your employer's rules about moving work files.
 
-Current access model (until week-2 pairing lands): the agent prints a
-**ticket that works like a password**. Anyone who has it can read the shared
-folder until the agent is stopped. Stopping the agent revokes every ticket.
+Current access model: devices are **paired once** (`pigeon-agent pair` shows
+a single-use, 12-hour invite link and a 4-word code; see
+[docs/security/PAIRING.md](docs/security/PAIRING.md)). After that the agent
+lets in only device keys on its allow-list, and `pigeon-agent revoke` removes
+one at once. Treat the 4-word code like a password until it is used: anyone
+who has both the link and the code before you pair can pair instead of you
+(you would notice, because your own pairing then fails).
 
 ## Reporting a vulnerability
 

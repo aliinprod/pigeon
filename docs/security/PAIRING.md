@@ -1,7 +1,9 @@
 # Pairing design review (week 2)
 
 Owner: Warden. Implementer: Anvil (core, agent, CLI), Canvas (UI). Status:
-**approved design, not implemented**. Replaces the Day-1 bearer token in the
+**approved design, implemented in week 1** (CLI only; the app comes later).
+Deviations and deferred items are listed in [section 9](#9-implementation-notes-week-1).
+Replaces the Day-1 bearer token in the
 ticket (threat TH-02 / risk R1 in [THREAT_MODEL.md](THREAT_MODEL.md)).
 Requirements: SEC-08, SEC-09, SEC-11, SEC-19, SEC-22.
 
@@ -158,3 +160,46 @@ temp file + atomic rename. Anyone who can edit it already runs as the owner.
   token auth.
 - Wordlist: embed the EFF short wordlist (CC BY 3.0 US, attribution in
   `NOTICE`); select words with `getrandom` + rejection sampling.
+
+## 9. Implementation notes (week 1)
+
+Code: [`pair.rs`](../../crates/pigeon-core/src/pair.rs) (protocol, code,
+invite, link), [`agent.rs`](../../crates/pigeon-core/src/agent.rs) (allow-list
+check, pairing handler, revoke), [`keystore.rs`](../../crates/pigeon-core/src/keystore.rs),
+[`devices.rs`](../../crates/pigeon-core/src/devices.rs), the two binaries.
+Tests: [`tests/pairing.rs`](../../crates/pigeon-core/tests/pairing.rs) plus the
+unit / property tests named in [REQUIREMENTS.md](REQUIREMENTS.md).
+
+Implemented as designed: P1 handshake (SPAKE2 `=0.4.0` Ed25519Group A/B with
+both endpoint IDs as identities; RFC 5705 exporter with label
+`pigeon pair v1` and context `invite_id`; HKDF-SHA256 + HMAC-SHA256 key
+confirmation both ways over `T`; constant-time verify), single-use invite,
+default 12 h / max 24 h, 3 attempts decremented before the PAKE, one
+handshake at a time, pairing ALPN only while an invite is active, 10 s per
+step / 30 s total, 128-byte frames, `PairStart.version`, allow-list checked
+before `accept_bi()`, `devices` / `revoke` / `reset`, client `forget`,
+`Hello.token` and `pigeon/0` removed with no fallback, EFF wordlist with
+`getrandom` rejection sampling, all P-T1..P-T12 tests.
+
+Deviations (each with the reason):
+
+| # | Design says | Implemented | Why |
+|---|---|---|---|
+| D1 | EFF short list, 1296 words | 1295 words: `yo-yo` removed | `-` separates code words, and `yoyo` is already in the list. 4 words = 41.35 bits instead of 41.36. |
+| D2 | Keychain item `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` | Generic password in the **login keychain**, not synchronizable (so not in iCloud), via `security-framework =3.7.0` | The accessibility attribute only exists in the data-protection keychain, which needs a signed app with a keychain-access-group entitlement. An unsigned CLI gets `errSecMissingEntitlement`. Revisit when binaries are signed (SEC-27). |
+| D3 | Windows Credential Manager, user scope | Generic credential `Pigeon/<name>`, `CRED_PERSIST_LOCAL_MACHINE` (= kept across logons on this PC, not roaming; still per user and DPAPI-protected), via `windows-sys =0.61.2` | The Win32 API needs a small `unsafe` FFI block (the only `unsafe` in the workspace; the crate is `#![deny(unsafe_code)]` with a documented exception). Chosen over the `keyring` crate to avoid a new dependency tree for 3 calls. |
+| D4 | `PairOk { mac, agent_name }` | `AgentMsg::Ok { mac }`; the client names the agent itself (`pigeon pair --name`) | One less field from the other side to sanitize; the owner names both ends anyway. |
+| D5 | Invite in memory "or in the keystore" | Always in the keystore (it holds the code), so `pigeon-agent pair` (a separate process) can hand it to the running `share`, which polls it every 2 s. The allow-list file is polled every 500 ms. | No IPC socket (keeps "no listening ports" trivially true). A running agent never revives a spent invite ID, and never overwrites a newer invite. |
+| D6 | Fallback: none | `PIGEON_KEYSTORE=file` (opt-in) stores secrets in `0600` files under the config dir; also the default on OSes other than macOS/Windows | For headless machines without a usable keystore. Weaker; documented in `keystore.rs`. CI uses the real keystores. |
+| D7 | Client stores the agent `EndpointAddr` | Stores the `EndpointId` and the relay URL only (no IPs) | Direct IPs go stale; iroh address lookup finds current ones from the ID. |
+
+Deferred (not in this PR):
+
+- OS notification on a new pairing (the agent prints a log line instead).
+- `last_seen` per device (would need the running agent to rewrite
+  `devices.json` on every connection, racing with `revoke`).
+- QR code output (CLI only for now; the app will show it).
+- A per-peer cap for pairing connections (the global connection cap and
+  "one handshake at a time" apply).
+- Revoke latency through the CLI is "next 500 ms poll + close"; P-T8 measures
+  the in-process close (< 1 ms on loopback).
