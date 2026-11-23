@@ -379,7 +379,8 @@ fn rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// Test helper: fails if any file under `dir` contains one of `needles`.
-#[cfg(test)]
+// Used by the OS-keystore test, which only runs where there is one.
+#[cfg(all(test, any(target_os = "macos", windows)))]
 pub(crate) fn assert_no_file_contains(dir: &Path, needles: &[Vec<u8>]) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
