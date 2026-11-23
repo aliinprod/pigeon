@@ -360,13 +360,13 @@ fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
     let store = home.store()?;
     store.delete(AGENT_KEY)?;
     store.delete(INVITE_SECRET)?;
-    for file in [DEVICES_FILE, STATUS_FILE] {
-        match std::fs::remove_file(home.dir.join(file)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e).context(format!("could not remove {file}")),
-        }
-    }
+    // Locked, like `revoke`: a pairing finishing in `share` cannot bring a
+    // device back. The status file stays, so `pair` can warn if a `share`
+    // with the old key is still running (M1).
+    DeviceList::update(&home.dir.join(DEVICES_FILE), |list| {
+        list.devices.clear();
+        Ok(())
+    })?;
     println!("reset done: every paired device was forgotten.");
     // M1: a running `share` keeps the old key in memory.
     println!(
