@@ -443,6 +443,43 @@ mod tests {
     /// P-T9 on the real OS keystore (Keychain on macOS CI, Credential
     /// Manager on Windows CI), in a namespace of its own: the key round-trips
     /// and no key bytes end up in any file under the config dir.
+    /// Linux (and other OSes without a supported keystore): the device key
+    /// is an owner-only file. Proves, through the same path the binaries
+    /// use (`Home::device_key`), that the key file is `0600`, its folder and
+    /// the config dir are `0700`, the key is stable, and nothing else in the
+    /// config dir holds it. Runs on ubuntu-latest CI.
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[test]
+    fn linux_keystore_is_owner_only_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::config::Home::at(dir.path().join("pigeon")).unwrap();
+        let (key, store, created) = home.device_key(AGENT_KEY).unwrap();
+        assert!(created);
+        assert!(
+            store.describe().contains("owner-only files"),
+            "{}",
+            store.describe()
+        );
+        let (again, _, created) = home.device_key(AGENT_KEY).unwrap();
+        assert!(!created);
+        assert_eq!(key.public(), again.public());
+
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let secrets = home.dir.join("secrets");
+        assert_eq!(mode(&home.dir), 0o700, "config dir");
+        assert_eq!(mode(&secrets), 0o700, "secrets dir");
+        assert_eq!(mode(&secrets.join("agent-key.secret")), 0o600, "key file");
+        // The key is in its own file only (raw bytes, as stored).
+        let raw = key.to_bytes();
+        let files: Vec<_> = std::fs::read_dir(&secrets).unwrap().collect();
+        assert_eq!(files.len(), 1, "unexpected files in {}", secrets.display());
+        assert_eq!(
+            std::fs::read(secrets.join("agent-key.secret")).unwrap(),
+            raw.to_vec()
+        );
+    }
+
     #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn os_keystore_roundtrip_leaves_no_key_on_disk() {

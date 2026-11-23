@@ -7,7 +7,7 @@
 //! owner-only and atomically ([`crate::config::write_private`]).
 
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -123,12 +123,18 @@ fn find<'a, T>(
     }
 }
 
-/// Holds `<file>.lock` while a read-modify-write runs, so `pigeon-agent
-/// revoke` (one process) and a pairing that completes in `share` (another)
-/// cannot undo each other's change (W-4). A lock older than 30 s is from a
-/// crashed process and is taken over.
+/// An OS file lock on `<file>.lock` held while a read-modify-write runs, so
+/// `pigeon-agent revoke` (one process) and a pairing that completes in
+/// `share` (another) cannot undo each other's change (W-4).
+///
+/// The lock file is persistent and never deleted; the lock itself is the
+/// OS's (`LockFileEx` on Windows, `flock` on Unix, via `File::try_lock`), so
+/// it is released when the holder exits, even after a crash. (The first
+/// version created and deleted the lock file; on Windows a file being
+/// deleted stays "delete pending" while handles are open, and opening it
+/// then fails with ERROR_ACCESS_DENIED, which made concurrent updates fail.)
 pub struct FileLock {
-    path: PathBuf,
+    _file: std::fs::File,
 }
 
 impl FileLock {
@@ -136,43 +142,31 @@ impl FileLock {
         let mut name = target.file_name().context("no file name")?.to_owned();
         name.push(".lock");
         let path = target.with_file_name(name);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .with_context(|| format!("could not open {}", path.display()))?;
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(_) => return Ok(Self { path }),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .ok()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(|t| t.elapsed().ok())
-                        .is_some_and(|age| age > Duration::from_secs(30));
-                    if stale {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(std::fs::TryLockError::WouldBlock) => {
                     if Instant::now() > deadline {
                         bail!(
                             "{} is busy (another pigeon-agent command is changing it); try again",
                             target.display()
                         );
                     }
-                    std::thread::sleep(Duration::from_millis(20));
+                    std::thread::sleep(Duration::from_millis(10));
                 }
-                Err(e) => {
+                Err(std::fs::TryLockError::Error(e)) => {
                     return Err(e).with_context(|| format!("could not lock {}", target.display()));
                 }
             }
         }
-    }
-}
-
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -296,13 +290,13 @@ mod tests {
     fn concurrent_updates_lose_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(DEVICES_FILE);
-        let threads: Vec<_> = (0..2u8)
+        let threads: Vec<_> = (0..4u8)
             .map(|t| {
                 let path = path.clone();
                 std::thread::spawn(move || {
                     for i in 0..25u8 {
                         DeviceList::update(&path, |list| {
-                            list.upsert(device(1 + t * 100 + i, &format!("{t}-{i}")));
+                            list.upsert(device(1 + t * 60 + i, &format!("{t}-{i}")));
                             Ok(())
                         })
                         .unwrap();
@@ -313,8 +307,9 @@ mod tests {
         for t in threads {
             t.join().unwrap();
         }
-        assert_eq!(DeviceList::load(&path).unwrap().devices.len(), 50);
-        assert!(!dir.path().join("devices.json.lock").exists());
+        assert_eq!(DeviceList::load(&path).unwrap().devices.len(), 100);
+        // The lock file is persistent (never deleted) and no longer locked.
+        assert!(FileLock::acquire(&path).is_ok());
     }
 
     #[test]
