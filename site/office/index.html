@@ -7,7 +7,7 @@
   <meta name="description" content="The Pigeon team of AI agents at work: who is doing what, what they finished, and what waits for the owner.">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex">
-  <link rel="icon" href="logo.webp" type="image/webp">
+  <link rel="icon" type="image/png" href="../assets/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
@@ -18,7 +18,7 @@
 
   <header class="top">
     <a class="brand" href="https://flypigeon.pages.dev/" aria-label="Pigeon website">
-      <span class="logo"><img src="logo.webp" alt="" width="512" height="512"></span>
+      <span class="logo"><img src="../assets/logo.webp" alt="" width="512" height="512"></span>
       <span class="wordmark">Pigeon</span>
     </a>
     <div class="top-title">
@@ -35,9 +35,10 @@
     <section class="scene" aria-labelledby="scene-title">
       <h2 id="scene-title" class="visually-hidden">The office</h2>
       <div class="stage" id="stage">
-        <canvas id="scene" width="480" height="320" role="img"
-          aria-label="Pixel-art office at dusk. Seven bots sit at desks with retro monitors and lamps. A wall board lists each bot and its status. The same information is in the dashboard."></canvas>
-        <div class="tags" id="tags"></div>
+        <canvas id="scene" width="440" height="324" role="img"
+          aria-label="Pixel-art office at dusk: seven bots at their desks, a wall screen listing who is doing what, a whiteboard, a server rack, a meeting table and a coffee corner. A small marker above each bot shows its status. The same information is in the dashboard."></canvas>
+        <div class="hits" id="hits"></div>
+        <div class="tip" id="tip" hidden></div>
         <noscript><p class="noscript">The animated office needs JavaScript. The raw team status is in <a href="status.json">status.json</a>.</p></noscript>
       </div>
       <ul class="legend" aria-label="Status legend">
@@ -45,8 +46,9 @@
         <li><span class="st st--done" aria-hidden="true"></span>Done</li>
         <li><span class="st st--waiting" aria-hidden="true"></span>Waiting for owner</li>
         <li><span class="st st--idle" aria-hidden="true"></span>Idle</li>
-        <li class="legend-hint">Tap a bot for details.</li>
+        <li class="legend-hint">Hover or tap a bot for its task.</li>
       </ul>
+      <p class="scene-controls"><button type="button" class="btn btn--sm" id="names" aria-pressed="false">Show names</button></p>
       <p class="visually-hidden" id="selection" aria-live="polite"></p>
     </section>
 
@@ -67,7 +69,7 @@
   </main>
 
   <footer class="foot">
-    <p>Atlas updates <a href="status.json">status.json</a> when work is handed out or finished. Pixel art drawn in code for this page. No trackers, no cookies.</p>
+    <p>Atlas updates <a href="status.json">status.json</a> when work is handed out or finished. Pixel art drawn in code for this page. Behind a login. No trackers, no cookies.</p>
   </footer>
 
   <!-- Fallback copy of status.json, used when the page is opened from the file system
@@ -75,7 +77,7 @@
   <script type="application/json" id="status-fallback">
 {
   "version": 1,
-  "updated_at": "2026-11-23T18:30:00Z",
+  "updated_at": "2026-11-23T19:30:00Z",
   "updated_by": "atlas",
   "agents": [
     {
@@ -112,10 +114,10 @@
       "status": "waiting",
       "task": "One app, two roles design (PR #7): waiting for merge and PM decisions",
       "last_result": {
-        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux",
+        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux; PM decisions approved by owner",
         "url": "https://github.com/aliinprod/pigeon/pull/7"
       },
-      "updated_at": "2026-11-23T18:20:27Z"
+      "updated_at": "2026-11-23T19:30:00Z"
     },
     {
       "id": "plume",
@@ -123,12 +125,12 @@
       "role": "Website",
       "about": "The website in site/: static HTML and CSS, no trackers. Done means screenshots at 390 and 1440 px, no console errors, links checked.",
       "status": "working",
-      "task": "Building the agent office",
+      "task": "Redesigning the office + login gate",
       "last_result": {
         "text": "PR #8 merged: app screenshots on the site, live on flypigeon.pages.dev",
         "url": "https://github.com/aliinprod/pigeon/pull/8"
       },
-      "updated_at": "2026-11-23T18:30:00Z"
+      "updated_at": "2026-11-23T19:30:00Z"
     },
     {
       "id": "warden",
@@ -177,9 +179,9 @@
       "url": "https://github.com/aliinprod/pigeon/pull/7"
     },
     {
-      "text": "Confirm PM decisions for the app (13 questions)",
-      "from": "canvas",
-      "url": "https://github.com/aliinprod/pigeon/pull/7"
+      "text": "Merge PR #11 (office) and set office login in Cloudflare",
+      "from": "plume",
+      "url": "https://github.com/aliinprod/pigeon/pull/11"
     },
     {
       "text": "Test pairing build on the office Mac",

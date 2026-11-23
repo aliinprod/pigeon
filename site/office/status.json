@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-11-23T18:30:00Z",
+  "updated_at": "2026-11-23T19:30:00Z",
   "updated_by": "atlas",
   "agents": [
     {
@@ -37,10 +37,10 @@
       "status": "waiting",
       "task": "One app, two roles design (PR #7): waiting for merge and PM decisions",
       "last_result": {
-        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux",
+        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux; PM decisions approved by owner",
         "url": "https://github.com/aliinprod/pigeon/pull/7"
       },
-      "updated_at": "2026-11-23T18:20:27Z"
+      "updated_at": "2026-11-23T19:30:00Z"
     },
     {
       "id": "plume",
@@ -48,12 +48,12 @@
       "role": "Website",
       "about": "The website in site/: static HTML and CSS, no trackers. Done means screenshots at 390 and 1440 px, no console errors, links checked.",
       "status": "working",
-      "task": "Building the agent office",
+      "task": "Redesigning the office + login gate",
       "last_result": {
         "text": "PR #8 merged: app screenshots on the site, live on flypigeon.pages.dev",
         "url": "https://github.com/aliinprod/pigeon/pull/8"
       },
-      "updated_at": "2026-11-23T18:30:00Z"
+      "updated_at": "2026-11-23T19:30:00Z"
     },
     {
       "id": "warden",
@@ -102,9 +102,9 @@
       "url": "https://github.com/aliinprod/pigeon/pull/7"
     },
     {
-      "text": "Confirm PM decisions for the app (13 questions)",
-      "from": "canvas",
-      "url": "https://github.com/aliinprod/pigeon/pull/7"
+      "text": "Merge PR #11 (office) and set office login in Cloudflare",
+      "from": "plume",
+      "url": "https://github.com/aliinprod/pigeon/pull/11"
     },
     {
       "text": "Test pairing build on the office Mac",

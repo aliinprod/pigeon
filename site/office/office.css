@@ -108,7 +108,7 @@ a:hover { text-decoration-thickness: 2px; }
 /* ---------- Scene ---------- */
 .stage {
   position: relative;
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 440 / 324;
   background: #0f0b12;
   border-radius: 14px;
   overflow: hidden;
@@ -124,66 +124,57 @@ a:hover { text-decoration-thickness: 2px; }
 .noscript { position: absolute; inset: auto 16px 16px; color: #fff; background: #0b0b0b; padding: 12px 14px; border-radius: 10px; }
 .noscript a { color: #fff; }
 
-.tags { position: absolute; inset: 0; pointer-events: none; }
-.tag {
-  --tail: 50%;
-  --stem: 0px;
+/* Hit areas over each bot: invisible until focused. Holds the optional name chip. */
+.hits { position: absolute; inset: 0; pointer-events: none; }
+.hit {
   position: absolute; left: 0; top: 0;
-  display: flex; flex-direction: column; align-items: flex-start;
-  max-width: 200px;
-  padding: 0; margin: 0; border: 0; background: none; color: inherit;
-  font: inherit; text-align: left; cursor: pointer;
-  pointer-events: auto;
+  padding: 0; margin: 0; border: 0; background: transparent; color: inherit; font: inherit;
+  border-radius: 8px; cursor: pointer; pointer-events: auto;
   will-change: transform;
 }
-.tag::before {           /* stem down to the head when the tag had to move up */
-  content: ""; position: absolute; top: 100%; left: var(--tail);
-  width: 2px; height: var(--stem); transform: translateX(-1px);
-  background: rgba(255, 255, 255, 0.5);
+.hit:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+.chip {
+  position: absolute; left: 50%; bottom: calc(100% + 2px); transform: translateX(-50%);
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(11, 11, 11, 0.62); color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font: 600 10.5px/1.35 var(--font-head); white-space: nowrap;
+  display: none; pointer-events: none;
 }
-.tag::after {            /* bubble tail */
-  content: ""; position: absolute; top: calc(100% - 6px); left: var(--tail);
+.show-names .chip { display: block; }
+.hit.is-selected .chip { background: rgba(255, 255, 255, 0.92); color: var(--ink); }
+
+/* One tooltip at a time: name, role, status, task. */
+.tip {
+  --tail: 50%;
+  position: absolute; left: 0; top: 0; z-index: 5;
+  width: max-content; max-width: min(260px, calc(100% - 12px));
+  background: #fff; color: var(--ink);
+  border: 2px solid var(--ink); border-radius: 10px;
+  padding: 7px 10px 8px;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  font: 400 12.5px/1.4 var(--font-body);
+}
+.tip[hidden] { display: none; }
+.tip::after {
+  content: ""; position: absolute; top: calc(100% - 5px); left: var(--tail);
   width: 9px; height: 9px; transform: translateX(-50%) rotate(45deg);
   background: #fff; border-right: 2px solid var(--ink); border-bottom: 2px solid var(--ink);
 }
-.tag-head {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  background: var(--ink); color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.24); border-radius: 6px;
-  padding: 3px 7px;
-  font: 600 12px/1.2 var(--font-head); letter-spacing: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.tag-head b { font-weight: 700; }
-.tag-role { color: #b9bdc4; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
-.tag-bubble {
-  margin-top: 4px;
-  background: #fff; color: var(--ink);
-  border: 2px solid var(--ink); border-radius: 8px;
-  padding: 4px 8px;
-  font: 500 12px/1.3 var(--font-body);
-  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.45);
-  display: block; max-width: 100%;
-}
-.tag-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-.tag[data-status="idle"] .tag-bubble { color: #4d5158; }
-.tag:hover .tag-head, .tag.is-selected .tag-head { border-color: #fff; }
-.tag.is-selected { z-index: 3; }
-.tag.is-selected .tag-head { background: #fff; color: var(--ink); }
-.tag.is-selected .tag-role { color: #4d5158; }
-.tag:focus-visible { outline: none; }
-.tag:focus-visible .tag-head { outline: 2px solid var(--signal); outline-offset: 2px; }
+.tip.is-below::after { top: -6px; transform: translateX(-50%) rotate(-135deg); }
+.tip p { margin: 0; }
+.tip-head { display: flex; align-items: center; gap: 7px; font: 700 13.5px/1.2 var(--font-head); }
+.tip-role { font: 500 12px/1.2 var(--font-body); color: #4d5158; }
+.tip-status { font: 500 10.5px/1.6 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: #4d5158; margin-top: 3px; }
+.tip[data-status="waiting"] .tip-status { color: #b23a0e; }
+.tip-task { margin-top: 2px; font-weight: 500; }
 
-/* Phones: name chips only; tap one to open its bubble. */
-.stage.is-compact .tag { max-width: 168px; }
-.stage.is-compact .tag-role,
-.stage.is-compact .tag-bubble,
-.stage.is-compact .tag::after { display: none; }
-.stage.is-compact .tag.is-open .tag-bubble { display: block; font-size: 11.5px; }
-.stage.is-compact .tag.is-open::after { display: block; }
-.stage.is-compact .tag-head { font-size: 11px; padding: 2px 6px; gap: 5px; }
+.scene-controls { margin: 10px 0 0; }
+.btn--sm { min-height: 32px; padding: 7px 12px; font-size: 12.5px; }
+.btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 
-/* Status marks (shared by scene tags and the dashboard) */
+/* Status marks (dashboard, legend, tooltip) */
 .st { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; }
 .st--working { background: currentColor; animation: pulse 1.6s ease-out infinite; }
 .st--waiting { background: var(--signal); }

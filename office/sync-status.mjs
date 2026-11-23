@@ -1,4 +1,4 @@
-// Copies office/status.json into the fallback block in office/index.html.
+// Copies site/office/status.json into the fallback block in site/office/index.html.
 // Usage:  node office/sync-status.mjs          (write)
 //         node office/sync-status.mjs --check  (exit 1 if out of sync; for CI)
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -6,8 +6,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const jsonPath = join(here, 'status.json');
-const htmlPath = join(here, 'index.html');
+const served = join(here, '..', 'site', 'office');
+const jsonPath = join(served, 'status.json');
+const htmlPath = join(served, 'index.html');
 
 const raw = readFileSync(jsonPath, 'utf8');
 const data = JSON.parse(raw); // throws on invalid JSON, which is what we want
