@@ -1,9 +1,15 @@
 //! Pigeon core: protocol types, path guard and the shared transfer code used by
 //! both the agent and the CLI.
 
+// `unsafe` is only allowed where it is unavoidable (the Windows Credential
+// Manager FFI in `keystore`), and each use is justified in place.
+#![deny(unsafe_code)]
+
 pub mod agent;
 pub mod client;
+pub mod config;
 pub mod guard;
+pub mod keystore;
 pub mod proto;
 pub mod ticket;
 
@@ -14,6 +20,12 @@ pub const ALPN: &[u8] = b"pigeon/0";
 
 /// Placeholder printed instead of secrets in `Debug` output.
 pub(crate) const REDACTED: &str = "<redacted>";
+
+/// Short, human-comparable name for a device: the first 8 base32 characters
+/// of its endpoint ID (PAIRING.md section 4, step 8).
+pub fn fingerprint(id: &iroh::EndpointId) -> String {
+    data_encoding::BASE32_NOPAD.encode(id.as_bytes())[..8].to_ascii_lowercase()
+}
 
 /// Hex-encodes a SHA-256 digest.
 pub fn hex(bytes: &[u8]) -> String {

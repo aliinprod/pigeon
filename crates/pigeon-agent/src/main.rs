@@ -11,6 +11,8 @@ use iroh::{Endpoint, endpoint::presets};
 use pigeon_core::{
     ALPN, Ticket,
     agent::{ServeOptions, Share, serve},
+    config::Home,
+    keystore::AGENT_KEY,
 };
 
 #[derive(Parser)]
@@ -40,7 +42,18 @@ async fn main() -> Result<()> {
         .with_context(|| format!("folder not found: {}", dir.display()))?;
     anyhow::ensure!(root.is_dir(), "not a folder: {}", root.display());
 
+    // A stable device identity: the same endpoint ID after every restart.
+    let home = Home::from_env()?;
+    let (key, store, created) = home.device_key(AGENT_KEY)?;
+    eprintln!(
+        "agent id {} ({} key in {})",
+        pigeon_core::fingerprint(&key.public()),
+        if created { "new" } else { "existing" },
+        store.describe()
+    );
+
     let endpoint = Endpoint::builder(presets::N0)
+        .secret_key(key)
         .alpns(vec![ALPN.to_vec()])
         .bind()
         .await?;

@@ -19,7 +19,7 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::{Endpoint, endpoint::presets};
-use pigeon_core::{Ticket, client};
+use pigeon_core::{Ticket, client, config::Home, keystore::CLIENT_KEY};
 
 /// Environment variable that may hold the ticket.
 const TICKET_ENV: &str = "PIGEON_TICKET";
@@ -57,7 +57,9 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let mut builder = Endpoint::builder(presets::N0);
+    // A stable device identity, so an agent can recognise this device.
+    let (key, _store, _created) = Home::from_env()?.device_key(CLIENT_KEY)?;
+    let mut builder = Endpoint::builder(presets::N0).secret_key(key);
     if cli.relay_only {
         builder = builder.clear_ip_transports();
     }

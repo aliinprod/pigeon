@@ -2152,11 +2152,14 @@ dependencies = [
  "iroh",
  "postcard",
  "proptest",
+ "security-framework",
  "serde",
  "sha2",
  "subtle",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
