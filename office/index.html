@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pigeon agent office</title>
+  <meta name="description" content="The Pigeon team of AI agents at work: who is doing what, what they finished, and what waits for the owner.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="logo.webp" type="image/webp">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+  <link rel="stylesheet" href="office.css">
+</head>
+<body>
+  <a class="skip" href="#board">Skip to the dashboard</a>
+
+  <header class="top">
+    <a class="brand" href="https://flypigeon.pages.dev/" aria-label="Pigeon website">
+      <span class="logo"><img src="logo.webp" alt="" width="512" height="512"></span>
+      <span class="wordmark">Pigeon</span>
+    </a>
+    <div class="top-title">
+      <h1>Agent office</h1>
+      <p class="top-sub">The bots that build Pigeon, and what each one is doing right now.</p>
+    </div>
+    <div class="controls">
+      <button type="button" class="btn" id="play" aria-pressed="false">Pause animation</button>
+      <button type="button" class="btn" id="theme">Dark theme</button>
+    </div>
+  </header>
+
+  <main class="office">
+    <section class="scene" aria-labelledby="scene-title">
+      <h2 id="scene-title" class="visually-hidden">The office</h2>
+      <div class="stage" id="stage">
+        <canvas id="scene" width="480" height="320" role="img"
+          aria-label="Pixel-art office at dusk. Seven bots sit at desks with retro monitors and lamps. A wall board lists each bot and its status. The same information is in the dashboard."></canvas>
+        <div class="tags" id="tags"></div>
+        <noscript><p class="noscript">The animated office needs JavaScript. The raw team status is in <a href="status.json">status.json</a>.</p></noscript>
+      </div>
+      <ul class="legend" aria-label="Status legend">
+        <li><span class="st st--working" aria-hidden="true"></span>Working</li>
+        <li><span class="st st--done" aria-hidden="true"></span>Done</li>
+        <li><span class="st st--waiting" aria-hidden="true"></span>Waiting for owner</li>
+        <li><span class="st st--idle" aria-hidden="true"></span>Idle</li>
+        <li class="legend-hint">Tap a bot for details.</li>
+      </ul>
+      <p class="visually-hidden" id="selection" aria-live="polite"></p>
+    </section>
+
+    <aside class="board" id="board" aria-labelledby="board-title" tabindex="-1">
+      <div class="board-head">
+        <h2 id="board-title">Who is doing what</h2>
+        <p class="board-meta"><span id="summary"></span></p>
+        <p class="board-meta mono"><span id="updated"></span> <span id="source"></span></p>
+      </div>
+      <ol class="agents" id="agents"></ol>
+
+      <section class="queue" aria-labelledby="queue-title">
+        <h3 id="queue-title">Waiting for the owner <span class="count" id="queue-count">0</span></h3>
+        <ol class="queue-list" id="queue"></ol>
+        <p id="queue-empty" class="muted" hidden>Nothing. The team is not blocked.</p>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <p>Atlas updates <a href="status.json">status.json</a> when work is handed out or finished. Pixel art drawn in code for this page. No trackers, no cookies.</p>
+  </footer>
+
+  <!-- Fallback copy of status.json, used when the page is opened from the file system
+       (browsers block fetch() there). Keep it in sync: node office/sync-status.mjs -->
+  <script type="application/json" id="status-fallback">
+{
+  "version": 1,
+  "updated_at": "2026-11-23T18:30:00Z",
+  "updated_by": "atlas",
+  "agents": [
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "role": "Coordinator",
+      "about": "Splits work, delegates, reports to the owner, drafts the daily X post. Writes no product code.",
+      "status": "working",
+      "task": "Coordinating; drafting Day 4 post",
+      "last_result": {
+        "text": "Day 3 devlog and post draft",
+        "url": "https://github.com/aliinprod/pigeon/blob/main/posts/day-3.md"
+      },
+      "updated_at": "2026-11-23T18:25:00Z"
+    },
+    {
+      "id": "anvil",
+      "name": "Anvil",
+      "role": "Rust core + CLI",
+      "about": "Core protocol, the Mac agent and the CLI in Rust. Done means cargo test green on macOS and Windows CI.",
+      "status": "done",
+      "task": "Linux support + binaries",
+      "last_result": {
+        "text": "PR #9 merged: Linux support + binaries",
+        "url": "https://github.com/aliinprod/pigeon/pull/9"
+      },
+      "updated_at": "2026-11-23T18:20:10Z"
+    },
+    {
+      "id": "canvas",
+      "name": "Canvas",
+      "role": "Desktop app UI",
+      "about": "Desktop app UI (Tauri 2). Done means the app builds, with screenshots of each screen.",
+      "status": "waiting",
+      "task": "One app, two roles design (PR #7): waiting for merge and PM decisions",
+      "last_result": {
+        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux",
+        "url": "https://github.com/aliinprod/pigeon/pull/7"
+      },
+      "updated_at": "2026-11-23T18:20:27Z"
+    },
+    {
+      "id": "plume",
+      "name": "Plume",
+      "role": "Website",
+      "about": "The website in site/: static HTML and CSS, no trackers. Done means screenshots at 390 and 1440 px, no console errors, links checked.",
+      "status": "working",
+      "task": "Building the agent office",
+      "last_result": {
+        "text": "PR #8 merged: app screenshots on the site, live on flypigeon.pages.dev",
+        "url": "https://github.com/aliinprod/pigeon/pull/8"
+      },
+      "updated_at": "2026-11-23T18:30:00Z"
+    },
+    {
+      "id": "warden",
+      "name": "Warden",
+      "role": "Security",
+      "about": "Threat model, security requirements, design reviews before code, supply-chain checks and fuzzing in CI. Can block a PR on high or critical findings.",
+      "status": "idle",
+      "task": null,
+      "last_result": {
+        "text": "PR #6 security review: approve with follow-ups",
+        "url": "https://github.com/aliinprod/pigeon/pull/6#issuecomment-7097204911"
+      },
+      "updated_at": "2026-11-23T09:52:32Z"
+    },
+    {
+      "id": "proof",
+      "name": "Proof",
+      "role": "Verifier",
+      "about": "Turns risks into automated tests, reviews every PR and can reject it.",
+      "status": "idle",
+      "task": null,
+      "last_result": {
+        "text": "PR #6 verdict: pass with nits",
+        "url": "https://github.com/aliinprod/pigeon/pull/6#issuecomment-7097281137"
+      },
+      "updated_at": "2026-11-23T09:56:08Z"
+    },
+    {
+      "id": "frame",
+      "name": "Frame",
+      "role": "Promo video",
+      "about": "Promo videos and short clips from real app UI and real numbers.",
+      "status": "done",
+      "task": "Promo video v1",
+      "last_result": {
+        "text": "PR #10 merged: 33.5 s promo, 16:9 and 1:1",
+        "url": "https://github.com/aliinprod/pigeon/pull/10"
+      },
+      "updated_at": "2026-11-23T11:42:42Z"
+    }
+  ],
+  "owner_queue": [
+    {
+      "text": "Merge PR #7 (app design)",
+      "from": "canvas",
+      "url": "https://github.com/aliinprod/pigeon/pull/7"
+    },
+    {
+      "text": "Confirm PM decisions for the app (13 questions)",
+      "from": "canvas",
+      "url": "https://github.com/aliinprod/pigeon/pull/7"
+    },
+    {
+      "text": "Test pairing build on the office Mac",
+      "from": "atlas",
+      "url": null
+    }
+  ]
+}
+  </script>
+  <script src="office.js"></script>
+</body>
+</html>
