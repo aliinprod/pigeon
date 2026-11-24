@@ -6,6 +6,9 @@
 //!   (`--agent NAME` if there are several). No ticket, nothing secret on the
 //!   command line: this device is recognised by its key.
 //! - `pigeon agents`, `pigeon forget <NAME>`.
+//! - `pigeon whoami [--name NAME]`: this computer's name and fingerprint.
+//!   One key per computer: `pigeon-agent` on the same computer uses the same
+//!   one (PAIRING.md D9).
 //!
 //! The pairing code is a secret, so it is never a command-line argument
 //! (shell history, process list, clap error echo; TH-14). It is read from
@@ -24,13 +27,14 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use iroh::{Endpoint, endpoint::presets};
+use iroh::Endpoint;
 use pigeon_core::{
     client,
     config::Home,
     devices::{AGENTS_FILE, AgentList, PairedAgent, trusted_relay_hint},
     display_safe, fingerprint,
-    keystore::CLIENT_KEY,
+    identity::{self, Identity},
+    keystore::SecretStore,
     pair::{self, InviteLink, PairingCode},
 };
 use zeroize::Zeroizing;
@@ -98,6 +102,13 @@ enum Command {
         /// Agent name or fingerprint, as shown by `pigeon agents`.
         agent: String,
     },
+    /// Show this computer's name and fingerprint (one key for fetching and
+    /// sharing; `pigeon-agent whoami` shows the same).
+    Whoami {
+        /// Rename this computer, e.g. "Home PC".
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -131,8 +142,9 @@ async fn real_main(cli: Cli) -> Result<()> {
     let home = Home::from_env()?;
     let agents_path = home.dir.join(AGENTS_FILE);
     match cli.command {
-        Command::Agents => return agents_cmd(&agents_path),
-        Command::Forget { agent } => return forget_cmd(&agents_path, &agent),
+        Command::Agents => return agents_cmd(&home),
+        Command::Forget { agent } => return forget_cmd(&home, &agent),
+        Command::Whoami { name } => return whoami_cmd(&home, name.as_deref()),
         _ => {}
     }
 
@@ -156,16 +168,38 @@ async fn real_main(cli: Cli) -> Result<()> {
         }
     );
 
-    // A stable device identity: the agent's allow-list holds its public key.
-    let (key, _store, _created) = home.device_key(CLIENT_KEY)?;
-    let mut builder = Endpoint::builder(presets::N0).secret_key(key);
+    // A stable device identity, the same one `pigeon-agent` uses here: the
+    // agent's allow-list holds its public key.
+    let (me, store) = identity(&home)?;
+    // Usually the device key; for an agent paired before one-key-per-device,
+    // the old client key that agent knows (PAIRING.md D9).
+    let (key, target) = match &cli.command {
+        Command::Ls { agent, .. } | Command::Get { agent, .. } => {
+            let target = AgentList::load(&agents_path)?
+                .pick(agent.as_deref())?
+                .clone();
+            (me.key_for(store.as_ref(), &target)?, Some(target))
+        }
+        _ => (me.key.clone(), None),
+    };
+    let mut builder = client::endpoint_builder(key);
     if relay_only {
         builder = builder.clear_ip_transports();
     }
     let endpoint = builder.bind().await?;
-    let result = run(&endpoint, &agents_path, cli.command, code).await;
+    let result = run(&endpoint, &home, &me, target, cli.command, code).await;
     endpoint.close().await;
     result
+}
+
+/// This computer's identity (created or migrated on first use); prints what
+/// the migration did, once.
+fn identity(home: &Home) -> Result<(Identity, Box<dyn SecretStore>)> {
+    let (me, store) = home.identity()?;
+    for note in &me.notes {
+        eprintln!("{note}");
+    }
+    Ok((me, store))
 }
 
 /// Reads a secret (`what`) from `file`, else the environment variable `env`,
@@ -240,10 +274,13 @@ fn default_out(path: &str) -> Result<PathBuf> {
 
 async fn run(
     endpoint: &Endpoint,
-    agents_path: &Path,
+    home: &Home,
+    me: &Identity,
+    target: Option<PairedAgent>,
     command: Command,
     code: Option<PairingCode>,
 ) -> Result<()> {
+    let agents_path = home.dir.join(AGENTS_FILE);
     match command {
         Command::Pair { link, name, .. } => {
             let code = code.context("no pairing code")?;
@@ -258,23 +295,34 @@ async fn run(
                 // W-6: keep only a default (n0) relay as a hint.
                 relay_url: trusted_relay_hint(link.addr.relay_urls().next()),
                 paired_at: pair::now_secs(),
+                // Paired with the device key.
+                legacy_key: None,
             };
-            let mut list = AgentList::load(agents_path)?;
-            list.upsert(agent.clone());
-            list.save(agents_path)?;
+            let replaced = AgentList::update(&agents_path, |list| {
+                let old = list.agents.iter().find(|a| a.id == agent.id).cloned();
+                list.upsert(agent.clone());
+                Ok(old)
+            })?;
             println!(
                 "paired with {} (fingerprint {fp}). Try `pigeon ls`.",
                 display_safe(&agent.name)
             );
             println!(
-                "this device's fingerprint is {}; the agent lists it in `pigeon-agent devices`.",
-                fingerprint(&endpoint.id())
+                "this computer is {}; the agent lists it in `pigeon-agent devices`.",
+                me.summary()
             );
+            if let Some(old) = replaced.and_then(|a| a.legacy_key) {
+                println!(
+                    "This computer used its old key {old_fp} with that agent before. To remove the \
+                     old entry there, run `pigeon-agent revoke {old_fp}` on the agent.",
+                    old_fp = fingerprint(&old)
+                );
+                // Drops the old client key once no remembered agent needs it.
+                identity(home)?;
+            }
         }
-        Command::Ls { path, agent, .. } => {
-            let agent = AgentList::load(agents_path)?
-                .pick(agent.as_deref())?
-                .clone();
+        Command::Ls { path, .. } => {
+            let agent = target.context("no agent chosen")?;
             for e in client::list(endpoint, &agent.dial_addr(), &path).await? {
                 let kind = if e.is_dir { "dir " } else { "file" };
                 // Names come from the agent: never let them drive the terminal.
@@ -282,12 +330,8 @@ async fn run(
                 println!("{kind}  {:>14}  {:>10}  {name}", e.size, e.mtime);
             }
         }
-        Command::Get {
-            path, out, agent, ..
-        } => {
-            let agent = AgentList::load(agents_path)?
-                .pick(agent.as_deref())?
-                .clone();
+        Command::Get { path, out, .. } => {
+            let agent = target.context("no agent chosen")?;
             let out = match out {
                 Some(out) => out,
                 None => default_out(&path)?,
@@ -307,31 +351,55 @@ async fn run(
                 stats.sha256
             );
         }
-        Command::Agents | Command::Forget { .. } => unreachable!("handled before going online"),
+        Command::Agents | Command::Forget { .. } | Command::Whoami { .. } => {
+            unreachable!("handled before going online")
+        }
     }
     Ok(())
 }
 
-fn agents_cmd(path: &Path) -> Result<()> {
-    let list = AgentList::load(path)?;
+fn agents_cmd(home: &Home) -> Result<()> {
+    let (me, _) = identity(home)?;
+    println!("this computer: {}", me.summary());
+    let list = AgentList::load(&home.dir.join(AGENTS_FILE))?;
     if list.agents.is_empty() {
         println!("not paired with any agent yet: run `pigeon pair <INVITE-LINK>`");
     }
     for a in &list.agents {
-        println!("{}  {}", fingerprint(&a.id), display_safe(&a.name));
+        let via = match a.legacy_key {
+            Some(old) if old != me.id() => format!(
+                "  (paired with this computer's old key {}; pair again to switch)",
+                fingerprint(&old)
+            ),
+            _ => String::new(),
+        };
+        println!("{}  {}{via}", fingerprint(&a.id), display_safe(&a.name));
     }
     Ok(())
 }
 
-fn forget_cmd(path: &Path, query: &str) -> Result<()> {
-    let mut list = AgentList::load(path)?;
-    let gone = list.remove(query)?;
-    list.save(path)?;
+fn forget_cmd(home: &Home, query: &str) -> Result<()> {
+    let gone = AgentList::update(&home.dir.join(AGENTS_FILE), |list| list.remove(query))?;
     println!(
         "forgot {} ({}). To cut it off on the agent side too, run `pigeon-agent revoke` there.",
         display_safe(&gone.name),
         fingerprint(&gone.id)
     );
+    if gone.legacy_key.is_some() {
+        // Drops the old client key once no remembered agent needs it.
+        identity(home)?;
+    }
+    Ok(())
+}
+
+fn whoami_cmd(home: &Home, name: Option<&str>) -> Result<()> {
+    let (mut me, store) = identity(home)?;
+    if let Some(name) = name {
+        me.name = identity::set_name(&home.dir, name)?;
+        eprintln!("renamed this computer to {}", display_safe(&me.name));
+    }
+    let agents = AgentList::load(&home.dir.join(AGENTS_FILE))?;
+    print!("{}", me.whoami(store.as_ref(), &agents));
     Ok(())
 }
 

@@ -193,6 +193,7 @@ Deviations (each with the reason):
 | D6 | Fallback: none | `PIGEON_KEYSTORE=file` (opt-in) stores secrets in `0600` files under the config dir; also the default on OSes other than macOS/Windows. **Refused on Windows** (W-3) | For headless machines without a usable keystore. Weaker; documented in `keystore.rs`. CI uses the real keystores. |
 | D7 | Client stores the agent `EndpointAddr` | Stores the `EndpointId`, plus the link's relay URL only if it is one of iroh's default n0 relays (W-6); no IPs | Direct IPs go stale; iroh address lookup finds current ones from the ID. A tampered link must not pin a foreign relay for every later session. |
 | D8 | (not specified) | `PairStart` is read and checked (version, active invite ID) within 3 s *before* the one-at-a-time pairing lock is taken; one pairing connection per peer (W-2) | Otherwise anyone who knows the agent ID could keep the owner's pairing refused as busy. |
+| D9 | One device key per device; week 1 gave each *program* its own key (`agent-key`, `client-key`) | **One key per computer (per OS user) for both roles**: keystore entry `device-key`, used by `pigeon-agent` and `pigeon`; one device name (`device.json`); `whoami` in both programs. Migration and its reasoning: [section 9.1](#91-update-one-key-per-computer-week-2) | Owner decision after the Day-5 real test (each machine showed two fingerprints, Mac `pudlfeb6` / `h2233blt`, PC `fijzhrns` / `pqnvbqnt`). The app will be one program with both roles. Review: Warden. |
 
 Deferred (not in this PR):
 
@@ -208,3 +209,115 @@ Deferred (not in this PR):
 Measured: revoke latency through the CLI (file -> `watch` poll -> close) is
 about 0.43 s on loopback (`revoke_through_the_devices_file_closes_a_live_transfer`,
 limit 1.5 s); in-process (P-T8) under 1 ms.
+
+### 9.1 Update: one key per computer (week 2)
+
+Status: **implemented, awaiting Warden review.** Code:
+[`identity.rs`](../../crates/pigeon-core/src/identity.rs). The pairing
+protocol (P1) is unchanged: it already binds whatever endpoint key each side
+uses.
+
+**What changed.** Each computer (per OS user, per config dir) has one
+Ed25519 key, the keystore entry `device-key`, and one name (`device.json`,
+default: the OS computer name, `whoami --name` renames it). `pigeon-agent
+share`/`pair`/`devices` and `pigeon pair`/`ls`/`get`/`agents` all use it,
+and `pigeon-agent whoami` / `pigeon whoami` print the same name and
+fingerprint. `pigeon-agent reset --yes` now gives the computer a new key for
+both roles and says which remembered agents must be paired again.
+
+**First run with both programs at once.** Reading an existing key takes no
+lock. Creating or migrating it runs under an OS file lock
+(`device-key.lock`, the same `FileLock` as W-4, released by the OS if the
+holder dies); the second program waits up to 120 s (a Keychain prompt may be
+open), then re-reads the key the first one stored. Every write is read back
+before anything else happens. Tests: `identity::tests::concurrent_first_run_creates_one_key`
+(8 threads x 5 rounds), `concurrent_migration_is_done_once`, and through the
+real binaries `both_programs_create_and_show_one_identity_at_once` (4 + 4
+processes) and `binaries_migrate_a_two_key_install`.
+
+**Migration from a two-key install** (the owner's Mac and PC after Day 5), once,
+under the same lock, on the first run of either program:
+
+1. The **agent key becomes the device key.** No allow-list entry anywhere
+   changes: every device paired with this computer's agent keeps working.
+   (No agent key, only a client key: the client key becomes the device key,
+   so every remembered agent keeps working. Neither: a new key.)
+2. **Client-side pairings made with the old client key**: the agents on the
+   other side allow-listed only that key. Chosen option: **keep the old
+   client key as a fallback identity for exactly those agents.** Every agent
+   in `agents.json` at migration time is marked `legacy_key = <old client
+   key ID>`; `pigeon ls`/`get` dial a marked agent with the old client key
+   and every other agent with the device key. `pigeon agents` and `whoami`
+   show which agents still use the old key and how to switch: pair again
+   (`pigeon-agent pair` there, `pigeon pair <LINK>` here, which replaces
+   the mark) and then `pigeon-agent revoke <old fingerprint>` there (the CLI
+   prints that command). When no remembered agent needs the old client key
+   any more (paired again or forgotten), it is deleted, and only if it is
+   exactly the key recorded at migration.
+3. Order, for crash safety and idempotence: mark agents, record the old
+   client key and the entry to clean up in `device.json`, write
+   `device-key` and read it back, then delete the old entry that is now a
+   copy (`agent-key`, or `client-key` in the client-only case) **only if it
+   is byte-for-byte the device key** (compared by public key). A crash at any
+   step leaves a state the next run finishes; an entry that is not a copy is
+   never deleted (`interrupted_migration_is_finished_and_strangers_are_kept`).
+4. Proof that pairings survive in both directions:
+   [`tests/identity.rs`](../../crates/pigeon-core/tests/identity.rs)
+   `migration_keeps_pairings_working_in_both_directions` (two computers in
+   the Day-5 state over loopback iroh: Mac -> PC and PC -> Mac `get` with
+   SHA-256 match after migration; dialing with the device key instead is
+   refused, so the fallback is what keeps them alive; re-pairing with the
+   real P1 handshake switches to the device key and drops the old client
+   key; the other direction keeps using its fallback).
+
+**Why the fallback and not "re-pair now"** (security reasoning):
+
+- It grants nothing new. The old client key is already on the other
+  agent's allow-list and already in this computer's keystore with the same
+  protection; the fallback only keeps using it, for the same agents, for
+  the same purpose (dialing out). It is never used to serve, never offered
+  in a new pairing, and is deleted automatically once unused.
+- Revocation is unchanged: the owner can still cut the old key off with
+  `pigeon-agent revoke <fingerprint>` on the agent side at any time.
+- "Re-pair now" would break the owner's two working pairings on the first
+  run of the new build, and deleting the old client key would be
+  irreversible. Least surprise: everything keeps working, and the CLI says
+  what to do to finish.
+- It fails closed: if the old client key is missing, or an older build
+  rewrites `agents.json` without the mark, `pigeon` dials with the device
+  key, the agent refuses it ("not paired"), and the error says to pair again.
+- Merging the roles does not widen the blast radius in practice: both
+  per-role keys were in the same keystore, for the same OS user, readable by
+  the same processes (A2). A stolen device key acts as that computer in both
+  roles until revoked, as two stolen keys did before.
+
+**Residual, until each old pairing is redone:** the computer still holds two
+keys (as before the change), and the other side's `pigeon-agent devices`
+lists the old client fingerprint, not the one `whoami` prints; `pigeon
+agents` shows the old fingerprint next to each such agent so the owner can
+match them.
+
+**Both programs online at once with one key** (new, found while checking
+the iroh 1.5 source, `iroh-relay` `server/clients.rs` `Clients::register`):
+a relay routes packets for an endpoint ID to the **newest** connection with
+that ID and parks the older one until the newer disconnects (then the older
+is active again; iroh does not reconnect or fight over it). So while
+`pigeon ls`/`get` runs on a computer that also runs `pigeon-agent share`,
+new connections and relayed (not direct) traffic *to that computer's share*
+reach the short-lived `pigeon` process instead, which has no file ALPN and
+refuses them; the other computer's request fails or stalls until the `get`
+ends. Confidentiality is not affected (iroh TLS still authenticates both
+ends; the wrong process is the same user's own). Direct paths are not
+affected (`both_roles_with_one_key_at_once_over_direct_paths`). Mitigations
+in this change: the fetching side no longer **publishes** its address to
+n0's address lookup (it only resolves; `client::endpoint_builder`), so a
+`get` cannot replace the running agent's published record. Not mitigated
+(tracked as THREAT_MODEL R14): the relay slot. The real fix is one process
+holding one endpoint for both roles, which is the planned app.
+
+Not verified: the migration on the owner's real Mac and PC (Keychain /
+Credential Manager entries made by the Day-5 builds), and whether macOS asks
+"allow `pigeon` to access `device-key`?" the first time the *other* program
+reads the key (a Keychain item trusts the program that created it). The
+cross-network CI job records the macOS behaviour on a runner (informational
+step "one key for both programs"); on a real Mac, choose "Always Allow".

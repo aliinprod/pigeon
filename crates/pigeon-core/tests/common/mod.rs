@@ -21,7 +21,13 @@ use pigeon_core::{
 };
 
 pub async fn local_endpoint(alpns: Vec<Vec<u8>>) -> Endpoint {
+    local_endpoint_with_key(iroh::SecretKey::generate(), alpns).await
+}
+
+/// Like [`local_endpoint`], with a given device key.
+pub async fn local_endpoint_with_key(key: iroh::SecretKey, alpns: Vec<Vec<u8>>) -> Endpoint {
     Endpoint::builder(presets::Minimal)
+        .secret_key(key)
         .clear_ip_transports()
         .bind_addr("127.0.0.1:0")
         .unwrap()

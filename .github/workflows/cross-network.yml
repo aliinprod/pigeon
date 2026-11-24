@@ -88,7 +88,7 @@ jobs:
           cat "$RUNNER_TEMP/handoff/"*.sha256
       - name: start agent and create a pairing invite
         run: |
-          # The agent key goes to the runner's login Keychain (real keystore).
+          # The device key goes to the runner's login Keychain (real keystore).
           nohup target/release/pigeon-agent share "$RUNNER_TEMP/share" \
             >"$RUNNER_TEMP/agent.out" 2>"$RUNNER_TEMP/agent.err" &
           echo $! >"$RUNNER_TEMP/agent.pid"
@@ -115,6 +115,18 @@ jobs:
           printf '%s\n' "$code" >"$RUNNER_TEMP/handoff/code"
           rm -f "$RUNNER_TEMP/pair.out"
           cat "$RUNNER_TEMP/agent.err"
+      - name: one key for both programs (real Keychain)
+        # Informational (PAIRING.md D9): `pigeon` reads the key that
+        # `pigeon-agent` stored. If macOS asked "allow pigeon to access
+        # device-key?", this step would time out instead of failing the run.
+        continue-on-error: true
+        timeout-minutes: 2
+        run: |
+          a=$(target/release/pigeon-agent whoami | sed -n 's/^fingerprint: *//p')
+          c=$(target/release/pigeon whoami | sed -n 's/^fingerprint: *//p')
+          echo "pigeon-agent whoami: $a, pigeon whoami: $c"
+          echo "macOS Keychain, one key for both programs: pigeon-agent \`$a\`, pigeon \`$c\`" >>"$GITHUB_STEP_SUMMARY"
+          [ -n "$a" ] && [ "$a" = "$c" ]
       - name: publish invite
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -164,12 +176,13 @@ jobs:
           echo "::add-mask::$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/code")"
       - name: pigeon pair
         run: |
-          # The code comes from a file, never an argument (TH-14). The client
+          # The code comes from a file, never an argument (TH-14). The device
           # key goes to Windows Credential Manager (real keystore).
           link=$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/link")
           target/release/pigeon.exe pair "$link" --name "CI macOS runner" \
             --code-file "$RUNNER_TEMP/handoff/code"
           target/release/pigeon.exe agents
+          target/release/pigeon.exe whoami
       - name: pigeon ls
         run: |
           # No ticket any more: the agent knows this device by its key.

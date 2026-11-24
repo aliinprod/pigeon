@@ -15,9 +15,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use iroh::SecretKey;
 
-use crate::keystore::{self, SecretStore};
+use crate::{
+    identity::Identity,
+    keystore::{self, SecretStore},
+};
 
 /// Environment variable that overrides the config dir.
 pub const HOME_ENV: &str = "PIGEON_HOME";
@@ -62,11 +64,12 @@ impl Home {
         keystore::default_store(&self.dir, &self.namespace)
     }
 
-    /// Loads (or creates on first use) the device key `name`.
-    pub fn device_key(&self, name: &str) -> Result<(SecretKey, Box<dyn SecretStore>, bool)> {
+    /// This computer's one device identity (both roles), created or migrated
+    /// on first use ([`crate::identity::load`]).
+    pub fn identity(&self) -> Result<(Identity, Box<dyn SecretStore>)> {
         let store = self.store()?;
-        let (key, created) = keystore::load_or_create_key(store.as_ref(), name)?;
-        Ok((key, store, created))
+        let me = crate::identity::load(&self.dir, store.as_ref())?;
+        Ok((me, store))
     }
 }
 

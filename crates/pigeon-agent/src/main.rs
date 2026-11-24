@@ -7,7 +7,10 @@
 //! - `pigeon-agent devices`: list paired devices.
 //! - `pigeon-agent revoke <NAME|FINGERPRINT>`: remove a device; a running
 //!   agent drops its connections within a second.
-//! - `pigeon-agent reset --yes`: new agent key; forgets every pairing.
+//! - `pigeon-agent reset --yes`: new key for this computer; forgets every
+//!   pairing.
+//! - `pigeon-agent whoami [--name NAME]`: this computer's name and
+//!   fingerprint (the same as `pigeon whoami`: one key per computer).
 //!
 //! The agent only connects outward (to the iroh relay); it does not open any
 //! listening socket of its own beyond the UDP sockets iroh uses.
@@ -20,9 +23,10 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, endpoint::presets};
 use pigeon_core::{
     agent::{self, Agent, AgentStorage, Offer, ServeOptions},
     config::{Home, display_path},
-    devices::{DEVICES_FILE, Device, DeviceList},
+    devices::{AGENTS_FILE, AgentList, DEVICES_FILE, Device, DeviceList},
     display_safe, fingerprint,
-    keystore::{AGENT_KEY, SecretStore},
+    identity::{self, Identity},
+    keystore::SecretStore,
     pair::{self, Invite},
 };
 use serde::{Deserialize, Serialize};
@@ -71,11 +75,18 @@ enum Command {
         /// Device name or fingerprint, as shown by `pigeon-agent devices`.
         device: String,
     },
-    /// Create a new agent key and forget every paired device.
+    /// Create a new key for this computer and forget every paired device.
     Reset {
         /// Confirm: every paired device has to pair again.
         #[arg(long)]
         yes: bool,
+    },
+    /// Show this computer's name and fingerprint (one key for sharing and
+    /// fetching; `pigeon whoami` shows the same).
+    Whoami {
+        /// Rename this computer, e.g. "Office Mac".
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 
@@ -95,7 +106,29 @@ async fn main() -> Result<()> {
         Command::Devices => devices_cmd(&home),
         Command::Revoke { device } => revoke_cmd(&home, &device),
         Command::Reset { yes } => reset_cmd(&home, yes),
+        Command::Whoami { name } => whoami_cmd(&home, name.as_deref()),
     }
+}
+
+/// This computer's identity (created or migrated on first use); prints what
+/// the migration did, once.
+fn identity(home: &Home) -> Result<(Identity, Box<dyn SecretStore>)> {
+    let (me, store) = home.identity()?;
+    for note in &me.notes {
+        eprintln!("{note}");
+    }
+    Ok((me, store))
+}
+
+fn whoami_cmd(home: &Home, name: Option<&str>) -> Result<()> {
+    let (mut me, store) = identity(home)?;
+    if let Some(name) = name {
+        me.name = identity::set_name(&home.dir, name)?;
+        eprintln!("renamed this computer to {}", display_safe(&me.name));
+    }
+    let agents = AgentList::load(&home.dir.join(AGENTS_FILE))?;
+    print!("{}", me.whoami(store.as_ref(), &agents));
+    Ok(())
 }
 
 /// Files + keystore persistence for the running agent.
@@ -184,14 +217,15 @@ async fn share(home: Home, dir: PathBuf, verbose: bool) -> Result<()> {
         .with_context(|| format!("folder not found: {}", dir.display()))?;
     anyhow::ensure!(root.is_dir(), "not a folder: {}", display_path(&root));
 
-    // A stable device identity: the same endpoint ID after every restart.
-    let (key, store, created) = home.device_key(AGENT_KEY)?;
+    // A stable device identity: the same endpoint ID after every restart,
+    // and the same one `pigeon` uses on this computer.
+    let (me, store) = identity(&home)?;
     eprintln!(
-        "agent id {} ({} key in {})",
-        fingerprint(&key.public()),
-        if created { "new" } else { "existing" },
+        "this computer: {} (key in {})",
+        me.summary(),
         store.describe()
     );
+    let key = me.key.clone();
     let devices_path = home.dir.join(DEVICES_FILE);
     let devices = DeviceList::load(&devices_path)?;
 
@@ -270,8 +304,8 @@ fn pair_cmd(home: Home, name: Option<String>, ttl_hours: u64) -> Result<()> {
         (1..=24).contains(&ttl_hours),
         "--ttl must be between 1 and 24 hours"
     );
-    let (key, store, _) = home.device_key(AGENT_KEY)?;
-    let id = key.public();
+    let (me, store) = identity(&home)?;
+    let id = me.id();
     // Relay hint from a running (or the last) `share`, if it used this key.
     let mut addr = EndpointAddr::new(id);
     if let Ok(bytes) = std::fs::read(home.dir.join(STATUS_FILE))
@@ -298,8 +332,9 @@ fn pair_cmd(home: Home, name: Option<String>, ttl_hours: u64) -> Result<()> {
 
     let who = name.as_deref().unwrap_or("a new device");
     eprintln!(
-        "Invite for {} (single use, valid {ttl_hours} h, 3 attempts).",
-        display_safe(who)
+        "Invite for {} to fetch from this computer, {} (single use, valid {ttl_hours} h, 3 attempts).",
+        display_safe(who),
+        me.summary()
     );
     eprintln!();
     eprintln!("Link (not secret; you may email it to yourself):");
@@ -308,12 +343,17 @@ fn pair_cmd(home: Home, name: Option<String>, ttl_hours: u64) -> Result<()> {
     eprintln!("Code (secret: keep it on this screen or a photo, never send it):");
     println!("code: {}", code.reveal());
     eprintln!();
-    eprintln!("On the other device run `pigeon pair <LINK>` and type the code.");
+    eprintln!(
+        "On the other device run `pigeon pair <LINK> --name \"{}\"` and type the code.",
+        display_safe(&me.name).replace('"', "'")
+    );
     eprintln!("Keep `pigeon-agent share <DIR>` running; it picks up this invite within seconds.");
     Ok(())
 }
 
 fn devices_cmd(home: &Home) -> Result<()> {
+    let (me, _) = identity(home)?;
+    println!("this computer: {}", me.summary());
     let list = DeviceList::load(&home.dir.join(DEVICES_FILE))?;
     if list.devices.is_empty() {
         println!("no paired devices (deny by default). Pair one with `pigeon-agent pair`.");
@@ -355,10 +395,12 @@ fn revoke_cmd(home: &Home, query: &str) -> Result<()> {
 fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
     anyhow::ensure!(
         yes,
-        "this makes a new agent key and forgets every paired device; run again with --yes"
+        "this makes a new key for this computer (sharing and fetching) and forgets every \
+         paired device; run again with --yes"
     );
-    let store = home.store()?;
-    store.delete(AGENT_KEY)?;
+    // Migrate first, so the agents paired with an old client key stay marked.
+    let (_, store) = identity(home)?;
+    let key = identity::reset(&home.dir, store.as_ref())?;
     store.delete(INVITE_SECRET)?;
     // Locked, like `revoke`: a pairing finishing in `share` cannot bring a
     // device back. The status file stays, so `pair` can warn if a `share`
@@ -367,7 +409,23 @@ fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
         list.devices.clear();
         Ok(())
     })?;
-    println!("reset done: every paired device was forgotten.");
+    println!(
+        "reset done: this computer's new fingerprint is {}; every paired device was forgotten.",
+        fingerprint(&key.public())
+    );
+    // One key per computer: the agents this computer fetches from knew the old one.
+    let agents = AgentList::load(&home.dir.join(AGENTS_FILE))?;
+    let stale = agents
+        .agents
+        .iter()
+        .filter(|a| a.legacy_key.is_none())
+        .count();
+    if stale > 0 {
+        println!(
+            "The {stale} agent(s) this computer fetches from (`pigeon agents`) knew the old key: \
+             pair with each again (`pigeon-agent pair` there, `pigeon pair <LINK>` here)."
+        );
+    }
     // M1: a running `share` keeps the old key in memory.
     println!(
         "If `pigeon-agent share` is running, stop it (Ctrl+C) and start it again now: it still \

@@ -24,10 +24,9 @@ use zeroize::Zeroizing;
 /// Environment variable that forces the file backend (`file`).
 pub const KEYSTORE_ENV: &str = "PIGEON_KEYSTORE";
 
-/// Name of the agent's device key in the store.
-pub const AGENT_KEY: &str = "agent-key";
-/// Name of the client's device key in the store.
-pub const CLIENT_KEY: &str = "client-key";
+// Key names live in [`crate::identity`]: one device key per computer
+// (`device-key`), plus the two per-role names from before (`agent-key`,
+// `client-key`) that the migration reads.
 
 /// Secret bytes read from a store. Zeroed on drop, never printed.
 pub struct Secret(Zeroizing<Vec<u8>>);
@@ -66,19 +65,41 @@ pub trait SecretStore: Send + Sync {
 /// A stored value that is not a valid key is an error, not a reason to make a
 /// new one: silently changing identity would break every pairing.
 pub fn load_or_create_key(store: &dyn SecretStore, name: &str) -> Result<(SecretKey, bool)> {
-    if let Some(secret) = store.get(name)? {
-        let bytes: &[u8; 32] = secret.as_bytes().try_into().with_context(|| {
-            format!(
-                "the stored device key `{name}` in {} is damaged",
-                store.describe()
-            )
-        })?;
-        return Ok((SecretKey::from_bytes(bytes), false));
+    if let Some(key) = read_key(store, name)? {
+        return Ok((key, false));
     }
     let key = SecretKey::generate();
+    write_key(store, name, &key)?;
+    Ok((key, true))
+}
+
+/// Reads the key `name`; `None` if there is none. A stored value that is not
+/// 32 bytes is an error ("damaged"), never `None`.
+pub fn read_key(store: &dyn SecretStore, name: &str) -> Result<Option<SecretKey>> {
+    let Some(secret) = store.get(name)? else {
+        return Ok(None);
+    };
+    let bytes: &[u8; 32] = secret.as_bytes().try_into().with_context(|| {
+        format!(
+            "the stored device key `{name}` in {} is damaged",
+            store.describe()
+        )
+    })?;
+    Ok(Some(SecretKey::from_bytes(bytes)))
+}
+
+/// Stores `key` as `name` and reads it back: an error unless the store now
+/// returns exactly this key.
+pub fn write_key(store: &dyn SecretStore, name: &str, key: &SecretKey) -> Result<()> {
     let bytes = Zeroizing::new(key.to_bytes());
     store.set(name, &bytes[..])?;
-    Ok((key, true))
+    match read_key(store, name)? {
+        Some(back) if back.public() == key.public() => Ok(()),
+        _ => bail!(
+            "saved the device key `{name}` in {}, but reading it back gave something else",
+            store.describe()
+        ),
+    }
 }
 
 /// The store to use on this machine. `namespace` keeps separate config dirs
@@ -369,6 +390,7 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::DEVICE_KEY;
 
     fn roundtrip(store: &dyn SecretStore) {
         let name = "roundtrip-test";
@@ -410,23 +432,20 @@ mod tests {
     #[test]
     fn device_key_is_stable_across_restarts() {
         let store = MemoryStore::default();
-        let (first, created) = load_or_create_key(&store, AGENT_KEY).unwrap();
+        let (first, created) = load_or_create_key(&store, DEVICE_KEY).unwrap();
         assert!(created);
-        let (again, created) = load_or_create_key(&store, AGENT_KEY).unwrap();
+        let (again, created) = load_or_create_key(&store, DEVICE_KEY).unwrap();
         assert!(!created);
         assert_eq!(first.public(), again.public());
-        // Agent and client keys are separate identities.
-        let (client, _) = load_or_create_key(&store, CLIENT_KEY).unwrap();
-        assert_ne!(client.public(), first.public());
     }
 
     #[test]
     fn damaged_key_is_an_error_not_a_new_identity() {
         let store = MemoryStore::default();
-        store.set(AGENT_KEY, b"short").unwrap();
-        let err = load_or_create_key(&store, AGENT_KEY).unwrap_err();
+        store.set(DEVICE_KEY, b"short").unwrap();
+        let err = load_or_create_key(&store, DEVICE_KEY).unwrap_err();
         assert!(format!("{err:#}").contains("damaged"), "{err:#}");
-        assert_eq!(store.get(AGENT_KEY).unwrap().unwrap().as_bytes(), b"short");
+        assert_eq!(store.get(DEVICE_KEY).unwrap().unwrap().as_bytes(), b"short");
     }
 
     #[test]
@@ -445,37 +464,39 @@ mod tests {
     /// and no key bytes end up in any file under the config dir.
     /// Linux (and other OSes without a supported keystore): the device key
     /// is an owner-only file. Proves, through the same path the binaries
-    /// use (`Home::device_key`), that the key file is `0600`, its folder and
+    /// use (`Home::identity`), that the key file is `0600`, its folder and
     /// the config dir are `0700`, the key is stable, and nothing else in the
     /// config dir holds it. Runs on ubuntu-latest CI.
     #[cfg(not(any(target_os = "macos", windows)))]
     #[test]
     fn linux_keystore_is_owner_only_files() {
+        use crate::identity::Origin;
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let home = crate::config::Home::at(dir.path().join("pigeon")).unwrap();
-        let (key, store, created) = home.device_key(AGENT_KEY).unwrap();
-        assert!(created);
+        let (me, store) = home.identity().unwrap();
+        assert_eq!(me.origin, Origin::Created);
         assert!(
             store.describe().contains("owner-only files"),
             "{}",
             store.describe()
         );
-        let (again, _, created) = home.device_key(AGENT_KEY).unwrap();
-        assert!(!created);
-        assert_eq!(key.public(), again.public());
+        let (again, _) = home.identity().unwrap();
+        assert_eq!(again.origin, Origin::Existing);
+        let key = me.key;
+        assert_eq!(key.public(), again.key.public());
 
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         let secrets = home.dir.join("secrets");
         assert_eq!(mode(&home.dir), 0o700, "config dir");
         assert_eq!(mode(&secrets), 0o700, "secrets dir");
-        assert_eq!(mode(&secrets.join("agent-key.secret")), 0o600, "key file");
+        assert_eq!(mode(&secrets.join("device-key.secret")), 0o600, "key file");
         // The key is in its own file only (raw bytes, as stored).
         let raw = key.to_bytes();
         let files: Vec<_> = std::fs::read_dir(&secrets).unwrap().collect();
         assert_eq!(files.len(), 1, "unexpected files in {}", secrets.display());
         assert_eq!(
-            std::fs::read(secrets.join("agent-key.secret")).unwrap(),
+            std::fs::read(secrets.join("device-key.secret")).unwrap(),
             raw.to_vec()
         );
     }
@@ -490,9 +511,9 @@ mod tests {
         let store = os_store(dir.path(), &namespace);
         roundtrip(store.as_ref());
 
-        let (key, created) = load_or_create_key(store.as_ref(), AGENT_KEY).unwrap();
+        let (key, created) = load_or_create_key(store.as_ref(), DEVICE_KEY).unwrap();
         assert!(created);
-        let (again, _) = load_or_create_key(store.as_ref(), AGENT_KEY).unwrap();
+        let (again, _) = load_or_create_key(store.as_ref(), DEVICE_KEY).unwrap();
         assert_eq!(key.public(), again.public());
 
         let raw = key.to_bytes();
@@ -506,7 +527,55 @@ mod tests {
                 .into_bytes(),
         ];
         crate::config::assert_no_file_contains(dir.path(), &forms);
-        store.delete(AGENT_KEY).unwrap();
-        assert!(store.get(AGENT_KEY).unwrap().is_none());
+        store.delete(DEVICE_KEY).unwrap();
+        assert!(store.get(DEVICE_KEY).unwrap().is_none());
+    }
+
+    /// One identity through the real OS keystore (Keychain on macOS CI,
+    /// Credential Manager on Windows CI): a two-key install (old `agent-key`
+    /// and `client-key`) migrates to one `device-key` equal to the old agent
+    /// key, the old client key stays as the fallback for the remembered
+    /// agent, a second load is a no-op, and no key bytes land in any file.
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn os_keystore_migration_roundtrip() {
+        use crate::identity::{self, LEGACY_AGENT_KEY, LEGACY_CLIENT_KEY, Origin};
+        let dir = tempfile::tempdir().unwrap();
+        let mut tag = [0u8; 6];
+        getrandom::fill(&mut tag).unwrap();
+        let store = os_store(dir.path(), &format!("test-{}", crate::hex(&tag)));
+        let store = store.as_ref();
+        let agent = SecretKey::generate();
+        let client = SecretKey::generate();
+        write_key(store, LEGACY_AGENT_KEY, &agent).unwrap();
+        write_key(store, LEGACY_CLIENT_KEY, &client).unwrap();
+        identity::tests_support::remember_agent(dir.path(), 9);
+
+        let me = identity::load(dir.path(), store).unwrap();
+        assert_eq!(me.origin, Origin::FromAgentKey);
+        assert_eq!(me.key.public(), agent.public());
+        assert_eq!(me.legacy_client, Some(client.public()));
+        assert!(read_key(store, LEGACY_AGENT_KEY).unwrap().is_none());
+        let again = identity::load(dir.path(), store).unwrap();
+        assert_eq!(again.origin, Origin::Existing);
+        assert_eq!(again.key.public(), agent.public());
+        assert_eq!(
+            read_key(store, LEGACY_CLIENT_KEY)
+                .unwrap()
+                .unwrap()
+                .public(),
+            client.public()
+        );
+
+        let mut forms = Vec::new();
+        for k in [&agent, &client] {
+            let raw = k.to_bytes();
+            forms.push(raw.to_vec());
+            forms.push(crate::hex(&raw).into_bytes());
+        }
+        crate::config::assert_no_file_contains(dir.path(), &forms);
+        for name in [DEVICE_KEY, LEGACY_AGENT_KEY, LEGACY_CLIENT_KEY] {
+            store.delete(name).unwrap();
+        }
     }
 }
