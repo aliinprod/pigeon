@@ -674,6 +674,45 @@ impl Agent {
     }
 }
 
+/// Lock target in the config dir held by a running `pigeon-agent share`
+/// (the OS lock is on `share.lock`, see [`crate::devices::FileLock`]).
+pub const SHARE_LOCK: &str = "share";
+
+/// Taken by `pigeon-agent share` for its whole lifetime (W-11). The OS
+/// drops it when the process ends, even after a crash. No socket: other
+/// programs only *try* the lock ([`share_running`]). A second `share` for
+/// the same computer is refused: it would fight the first for the relay slot.
+pub fn hold_share_lock(config_dir: &Path) -> Result<crate::devices::FileLock> {
+    // On a fresh install `share` runs before anything created the config dir.
+    crate::config::ensure_private_dir(config_dir)?;
+    crate::devices::FileLock::acquire_for(
+        &config_dir.join(SHARE_LOCK),
+        Duration::ZERO,
+        "`pigeon-agent share` is already running for this computer",
+    )
+}
+
+/// Whether a `pigeon-agent share` for this config dir is running now.
+/// Never blocks; any error counts as "not running" (it only decides a
+/// warning).
+pub fn share_running(config_dir: &Path) -> bool {
+    let path = config_dir.join(format!("{SHARE_LOCK}.lock"));
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+    else {
+        return false;
+    };
+    matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
+/// The one line `pigeon ls`/`get`/`pair` print while a share runs on this
+/// computer with the same key (TH-28, R14).
+pub const SHARE_RUNNING_WARNING: &str = "note: `pigeon-agent share` is running on this computer \
+     with the same key; while this command runs, other computers can reach that share only \
+     over direct connections, not through the relay";
+
 /// How often [`watch`] re-reads the allow-list file.
 pub const DEVICES_POLL: Duration = Duration::from_millis(500);
 /// How often [`watch`] looks for a new invite (and expires the old one).
@@ -941,6 +980,33 @@ mod tests {
             .map(|e| e.name)
             .collect();
         assert_eq!(names, ["in", "inner"], "escaping link must not be listed");
+    }
+
+    /// W-11: the share lock is seen by other programs (a separate handle,
+    /// as another process has), refuses a second share, and is gone when
+    /// the share stops.
+    #[test]
+    fn share_lock_is_visible_and_released() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!share_running(dir.path()), "no lock file yet");
+        let held = hold_share_lock(dir.path()).unwrap();
+        assert!(share_running(dir.path()));
+        let err = hold_share_lock(dir.path()).err().unwrap();
+        assert!(format!("{err:#}").contains("already running"), "{err:#}");
+        drop(held);
+        assert!(!share_running(dir.path()));
+        assert!(hold_share_lock(dir.path()).is_ok());
+    }
+
+    /// Fresh install (caught by the macOS cross-network CI job): the default
+    /// config dir does not exist yet when `share` takes the lock.
+    #[test]
+    fn share_lock_creates_a_missing_config_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("Library/Application Support/Pigeon");
+        assert!(!share_running(&fresh));
+        let _held = hold_share_lock(&fresh).unwrap();
+        assert!(share_running(&fresh));
     }
 
     #[tokio::test]

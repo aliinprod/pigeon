@@ -40,6 +40,22 @@ impl fmt::Display for Route {
     }
 }
 
+/// Endpoint builder for the fetching side (`pigeon`): n0 relays and n0
+/// address *lookup*, but no address *publishing*. The fetching side only
+/// dials out, so nobody needs to find it; and since it uses the same device
+/// key as a `pigeon-agent share` that may be running on this computer, a
+/// publisher here would replace the agent's published address record with
+/// this short-lived process's addresses (PAIRING.md D9). Same as
+/// `presets::N0` otherwise.
+pub fn endpoint_builder(key: iroh::SecretKey) -> iroh::endpoint::Builder {
+    use iroh::address_lookup::{DnsAddressLookup, PkarrResolver};
+    Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .secret_key(key)
+        .address_lookup(PkarrResolver::n0_dns())
+        .address_lookup(DnsAddressLookup::n0_dns())
+        .relay_mode(iroh::endpoint::default_relay_mode())
+}
+
 /// The path iroh currently uses to send application data on `conn`.
 pub fn route(conn: &Connection) -> Route {
     let paths = conn.paths();

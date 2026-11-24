@@ -10,6 +10,7 @@ pub mod client;
 pub mod config;
 pub mod devices;
 pub mod guard;
+pub mod identity;
 pub mod keystore;
 pub mod pair;
 pub mod proto;

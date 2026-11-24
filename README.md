@@ -26,7 +26,7 @@ Early builds are unsigned and come from GitHub Actions (download needs a free Gi
    xattr -d com.apple.quarantine pigeon-agent pigeon
    ./pigeon-agent share ~/Documents/ForHome
    ```
-   Keep it running. The first start creates the Mac's device key in your login Keychain (macOS may ask you to allow access; choose "Always Allow").
+   Keep it running. The first start creates the Mac's key in your login Keychain (macOS may ask you to allow access; choose "Always Allow"). **One key and one name per computer:** `pigeon-agent` (sharing) and `pigeon` (fetching) use the same one, so each computer has a single fingerprint. See it with `./pigeon-agent whoami` or `./pigeon whoami` (same output), and rename the computer with `whoami --name "Office Mac"`. The first time the *other* program reads the key, macOS may ask again; choose "Always Allow".
 3. **Pair the home PC (once).** In a second Mac terminal:
    ```sh
    ./pigeon-agent pair --name "Home PC"
@@ -36,7 +36,7 @@ Early builds are unsigned and come from GitHub Actions (download needs a free Gi
    ```powershell
    .\pigeon.exe pair pigeon-invite-... --name "Office Mac"
    ```
-   Both sides show each other's fingerprint. From now on no ticket or code is needed: the Mac recognises this PC by its key (kept in Windows Credential Manager).
+   Both sides show each other's fingerprint (`.\pigeon.exe whoami` on the PC prints the one the Mac lists in `./pigeon-agent devices`). From now on no ticket or code is needed: the Mac recognises this PC by its key (kept in Windows Credential Manager).
 5. **List and fetch:**
    ```powershell
    .\pigeon.exe ls
@@ -45,9 +45,19 @@ Early builds are unsigned and come from GitHub Actions (download needs a free Gi
    `get` resumes an interrupted download, checks the SHA-256, and never overwrites: if `report.pdf` exists it saves `report (1).pdf` and prints the final path.
    Add `--relay-only` to `ls` or `get` to force the encrypted relay path (slower; for testing). Add `-v` to see the full error details if something fails.
 
-**Lost the PC, or done with it?** On the Mac: `./pigeon-agent devices` lists paired devices and `./pigeon-agent revoke "Home PC"` cuts one off at once (a running agent drops its connections within a second). `./pigeon-agent reset --yes` makes a new Mac key and forgets every pairing (restart a running `share` afterwards, then pair again).
+**Lost the PC, or done with it?** On the Mac: `./pigeon-agent devices` lists paired devices and `./pigeon-agent revoke "Home PC"` cuts one off at once (a running agent drops its connections within a second). `./pigeon-agent reset --yes` makes a new key for the Mac (for sharing *and* fetching), retires every old key including one left from an older build, and forgets every pairing. It prints a `pigeon-agent revoke <fingerprint>` command for each old key (run them on the other computers) and lists every agent to pair with again. Restart a running `share` afterwards.
 
 The Day-1 "ticket" is gone: anyone who ever saw one can no longer use it.
+
+### Updating from an older build (two keys per computer)
+Builds before this change gave each program its own key, so each computer showed two fingerprints. The first run of the new build (either program) merges them, once, and prints what it did:
+- The **sharing key stays** and becomes the computer's one key: every device paired with this computer's `share` keeps working, nothing to do.
+- Agents this computer fetches from were paired with the old fetching key, so `pigeon` **keeps using that old key for exactly those agents**. `pigeon agents` marks them (`paired with this computer's old key ...`). Nothing breaks.
+- To finish (when convenient), pair each marked agent again: `pigeon-agent pair` on that computer, `pigeon pair <LINK>` here. `pigeon` then switches to the one key, deletes the old key once no agent needs it, and prints the `pigeon-agent revoke <old fingerprint>` command to remove the old entry on the agent.
+
+Nothing is deleted before the new key is stored and checked, and running the migration again changes nothing.
+
+**Known limit (command line only):** while `pigeon ls`/`get` runs on a computer that also runs `pigeon-agent share`, the relay sends that computer's traffic to the newer program, so the other computer cannot reach this one's share *through the relay* for as long as that command runs (direct connections are not affected). `pigeon` prints a one-line note when this applies. The desktop app will run both roles in one program.
 
 ### Any direction, any OS
 The steps above are the main case (office Mac shares, home PC fetches), but every build has both programs: **any machine can run `pigeon-agent share` and any machine can run `pigeon get`**. For example, to share a folder from a **Windows** PC and fetch from a **Mac**:

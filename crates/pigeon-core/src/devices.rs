@@ -43,6 +43,12 @@ pub struct PairedAgent {
     /// its endpoint ID through iroh address lookup.
     pub relay_url: Option<RelayUrl>,
     pub paired_at: u64,
+    /// The key this computer used when it paired with the agent, if that is
+    /// not the device key: the old per-role client key from before
+    /// one-key-per-device (PAIRING.md D9). `None` (the normal case) means the
+    /// device key. Kept until the agent is paired again or forgotten.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_key: Option<EndpointId>,
 }
 
 impl PairedAgent {
@@ -139,6 +145,15 @@ pub struct FileLock {
 
 impl FileLock {
     pub fn acquire(target: &Path) -> Result<Self> {
+        Self::acquire_for(
+            target,
+            Duration::from_secs(5),
+            "another Pigeon command is changing it",
+        )
+    }
+
+    /// Like [`Self::acquire`], waiting up to `wait`; `busy` says who holds it.
+    pub fn acquire_for(target: &Path, wait: Duration, busy: &str) -> Result<Self> {
         let mut name = target.file_name().context("no file name")?.to_owned();
         name.push(".lock");
         let path = target.with_file_name(name);
@@ -149,16 +164,13 @@ impl FileLock {
             .truncate(false)
             .open(&path)
             .with_context(|| format!("could not open {}", path.display()))?;
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + wait;
         loop {
             match file.try_lock() {
                 Ok(()) => return Ok(Self { _file: file }),
                 Err(std::fs::TryLockError::WouldBlock) => {
                     if Instant::now() > deadline {
-                        bail!(
-                            "{} is busy (another pigeon-agent command is changing it); try again",
-                            target.display()
-                        );
+                        bail!("{} is busy ({busy}); try again", target.display());
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -217,6 +229,15 @@ impl AgentList {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         save(path, self)
+    }
+
+    /// Locked read-modify-write of `agents.json` (like [`DeviceList::update`]).
+    pub fn update<T>(path: &Path, f: impl FnOnce(&mut AgentList) -> Result<T>) -> Result<T> {
+        let _lock = FileLock::acquire(path)?;
+        let mut list = Self::load(path)?;
+        let out = f(&mut list)?;
+        list.save(path)?;
+        Ok(out)
     }
 
     pub fn upsert(&mut self, agent: PairedAgent) {
@@ -339,6 +360,7 @@ mod tests {
             name: "Office Mac".into(),
             relay_url: Some("https://relay.example.com".parse().unwrap()),
             paired_at: 1,
+            legacy_key: None,
         };
         list.upsert(a.clone());
         assert_eq!(list.pick(None).unwrap(), &a);
@@ -350,8 +372,23 @@ mod tests {
             name: "Other".into(),
             relay_url: None,
             paired_at: 2,
+            legacy_key: None,
         });
         assert!(list.pick(None).is_err());
         assert_eq!(list.pick(Some("office mac")).unwrap(), &a);
+    }
+
+    /// `agents.json` written before one-key-per-device (no `legacy_key`)
+    /// still loads, and the field is only written when set.
+    #[test]
+    fn agents_file_without_legacy_key_loads() {
+        let id = SecretKey::from_bytes(&[7; 32]).public();
+        let old = format!(
+            r#"{{"agents":[{{"id":"{id}","name":"Office Mac","relay_url":null,"paired_at":5}}]}}"#
+        );
+        let list: AgentList = serde_json::from_str(&old).unwrap();
+        assert_eq!(list.agents[0].legacy_key, None);
+        let json = serde_json::to_string(&list).unwrap();
+        assert!(!json.contains("legacy_key"), "{json}");
     }
 }
