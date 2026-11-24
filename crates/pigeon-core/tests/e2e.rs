@@ -374,3 +374,107 @@ async fn stalled_reader_is_disconnected() {
     assert!(entries.iter().any(|e| e.name == "a.txt"));
     shutdown(s).await;
 }
+
+/// The app's progress callback: starts at the resume point, never goes
+/// backwards, and ends at the file size.
+#[tokio::test(flavor = "multi_thread")]
+async fn progress_is_reported_up_to_the_file_size() {
+    use std::sync::Mutex;
+    let s = setup().await;
+    let size = 3 * 1024 * 1024 + 17;
+    write_random_file(&s.root.join("p.bin"), size);
+    let out = s.work.join("p.bin");
+    // Pretend an earlier run got the first 1000 bytes.
+    let full = std::fs::read(s.root.join("p.bin")).unwrap();
+    std::fs::write(client::part_path(&out), &full[..1000]).unwrap();
+    let seen = Mutex::new(Vec::new());
+    let stats = within(client::get_with_progress(
+        &s.client,
+        &s.addr,
+        "p.bin",
+        &out,
+        &|p| seen.lock().unwrap().push(p),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(stats.resumed_from, 1000);
+    let seen = seen.into_inner().unwrap();
+    assert!(seen.len() >= 2, "{seen:?}");
+    assert_eq!(seen[0].done, 1000);
+    assert!(
+        seen.iter()
+            .all(|p| p.size == size as u64 && p.resumed_from == 1000)
+    );
+    assert!(seen.windows(2).all(|w| w[0].done <= w[1].done));
+    assert_eq!(seen.last().unwrap().done, size as u64);
+    assert_eq!(std::fs::read(&out).unwrap(), full);
+    shutdown(s).await;
+}
+
+/// The app shares named folders on the same agent; switching from one root
+/// to named folders takes effect for the next request, and a removed folder
+/// is gone at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn named_folders_over_the_wire() {
+    use pigeon_core::agent::SharedFolder;
+    let s = setup().await;
+    let other = s.work.join("other-share");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("o.txt"), b"other").unwrap();
+    std::fs::write(s.root.join("r.txt"), b"root").unwrap();
+    s.agent
+        .set_folders(vec![
+            SharedFolder {
+                name: "Main".into(),
+                path: s.root.clone(),
+            },
+            SharedFolder {
+                name: "Other".into(),
+                path: other.clone(),
+            },
+        ])
+        .unwrap();
+    let top: Vec<String> = within(client::list(&s.client, &s.addr, ""))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(top, ["Main", "Other"]);
+    let out = s.work.join("o.txt");
+    within(client::get(&s.client, &s.addr, "Other/o.txt", &out))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"other");
+    assert!(
+        within(client::get(
+            &s.client,
+            &s.addr,
+            "Main/../../secret.txt",
+            &s.work.join("x")
+        ))
+        .await
+        .is_err()
+    );
+    // Invalid names change nothing.
+    assert!(
+        s.agent
+            .set_folders(vec![SharedFolder {
+                name: "../x".into(),
+                path: other.clone()
+            }])
+            .is_err()
+    );
+    s.agent
+        .set_folders(vec![SharedFolder {
+            name: "Main".into(),
+            path: s.root.clone(),
+        }])
+        .unwrap();
+    assert!(
+        within(client::list(&s.client, &s.addr, "Other"))
+            .await
+            .is_err()
+    );
+    shutdown(s).await;
+}

@@ -620,3 +620,17 @@ async fn revoke_through_the_devices_file_closes_a_live_transfer() {
     watcher.abort();
     shutdown(s).await;
 }
+
+/// The app's "Cancel invite": the invite stops working at once (the right
+/// code fails) and nobody is added to the allow-list.
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelled_invite_never_pairs() {
+    let (s, link, code) = with_invite().await;
+    s.agent.cancel_invite();
+    assert!(!s.agent.invite_active());
+    assert!(within(pair::pair(&s.client, &link, &code)).await.is_err());
+    assert!(s.agent.devices().devices.is_empty());
+    // Cancelling with no invite is a no-op.
+    s.agent.cancel_invite();
+    shutdown(s).await;
+}

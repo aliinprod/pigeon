@@ -1,6 +1,7 @@
 //! Agent side: accepts iroh connections from paired devices and answers
-//! List/Get requests for one shared root folder; runs pairing while an invite
-//! is active.
+//! List/Get requests for one shared root folder (`pigeon-agent share <DIR>`)
+//! or for several named folders (the app, see [`SharedFolder`]); runs
+//! pairing while an invite is active.
 //!
 //! Deny by default: a connection on [`crate::ALPN`] whose endpoint ID is not
 //! on the allow-list is closed before any stream is accepted (SEC-08). The
@@ -121,6 +122,108 @@ pub enum Offer {
     OtherAgent,
 }
 
+/// One folder shared under a name (the app shares several). Peers see the
+/// names as the top-level directories of the share: `Photos/2026/a.jpg` is
+/// `a.jpg` in `2026` inside the folder named `Photos`. They never see `path`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedFolder {
+    /// What peers see. One path component; see [`check_folder_name`].
+    pub name: String,
+    /// Local folder (read-only; every request still goes through the guard).
+    pub path: PathBuf,
+}
+
+/// Longest shared-folder name, in characters.
+pub const MAX_FOLDER_NAME: usize = 128;
+
+/// A shared-folder name must be one ordinary path component: not empty, at
+/// most [`MAX_FOLDER_NAME`] characters, not `.`/`..`, no `/`, `\`, `:`, NUL,
+/// control or bidi characters, and no leading or trailing space.
+pub fn check_folder_name(name: &str) -> Result<()> {
+    anyhow::ensure!(!name.is_empty(), "a shared folder needs a name");
+    anyhow::ensure!(
+        name.chars().count() <= MAX_FOLDER_NAME,
+        "a shared folder name can have at most {MAX_FOLDER_NAME} characters"
+    );
+    anyhow::ensure!(
+        name != "." && name != "..",
+        "`.` and `..` are not folder names"
+    );
+    anyhow::ensure!(
+        name.trim() == name,
+        "a shared folder name cannot start or end with a space"
+    );
+    anyhow::ensure!(
+        !name.contains(['/', '\\', ':', '\0']) && crate::display_safe(name) == name,
+        "a shared folder name cannot contain `/`, `\\`, `:` or control characters"
+    );
+    Ok(())
+}
+
+/// Names must be valid and unique (case-insensitive, so the share behaves
+/// the same on every OS).
+fn check_folders(folders: &[SharedFolder]) -> Result<()> {
+    let mut seen = HashSet::new();
+    for f in folders {
+        check_folder_name(&f.name)?;
+        anyhow::ensure!(
+            seen.insert(f.name.to_lowercase()),
+            "two shared folders are called {:?}",
+            crate::display_safe(&f.name)
+        );
+    }
+    Ok(())
+}
+
+/// What the agent shares.
+enum Roots {
+    /// `pigeon-agent share <DIR>`: request paths are relative to this folder.
+    Single(PathBuf),
+    /// The app: request paths start with a folder name.
+    Named(Vec<SharedFolder>),
+}
+
+/// Where a request path points once the folder name is looked up.
+enum Target {
+    /// The list of named folders itself (`""` with [`Roots::Named`]).
+    Folders(Vec<SharedFolder>),
+    /// `rest` inside `root`, still to be checked by the guard.
+    Inside { root: PathBuf, rest: String },
+}
+
+impl Roots {
+    fn target(&self, path: &str) -> Result<Target> {
+        let folders = match self {
+            Roots::Single(root) => {
+                return Ok(Target::Inside {
+                    root: root.clone(),
+                    rest: path.to_string(),
+                });
+            }
+            Roots::Named(folders) => folders,
+        };
+        if path.starts_with(['/', '\\']) {
+            bail!("absolute paths are not allowed: {path}");
+        }
+        let (first, rest) = path.split_once(['/', '\\']).unwrap_or((path, ""));
+        if first.is_empty() || first == "." {
+            if rest.is_empty() {
+                return Ok(Target::Folders(folders.clone()));
+            }
+            // `./x`: keep paths simple and refuse.
+            bail!("not found: {path}");
+        }
+        match folders.iter().find(|f| f.name == first) {
+            Some(f) => Ok(Target::Inside {
+                root: f.path.clone(),
+                rest: rest.to_string(),
+            }),
+            // Same message as a missing file (SEC-10: no local paths).
+            None => bail!("not found: {path}"),
+        }
+    }
+}
+
 /// Keeps everything in memory.
 pub struct NoStorage;
 
@@ -185,7 +288,7 @@ pub struct Agent {
 }
 
 struct Inner {
-    root: PathBuf,
+    roots: RwLock<Roots>,
     opts: ServeOptions,
     endpoint: Endpoint,
     storage: Box<dyn AgentStorage>,
@@ -230,10 +333,39 @@ impl Agent {
         opts: ServeOptions,
         storage: Box<dyn AgentStorage>,
     ) -> Self {
+        Self::build(endpoint, Roots::Single(root), devices, opts, storage)
+    }
+
+    /// An agent sharing several named folders (the app). Peers see the
+    /// names as top-level directories. Fails on an invalid or duplicate name.
+    pub fn with_folders(
+        endpoint: Endpoint,
+        folders: Vec<SharedFolder>,
+        devices: DeviceList,
+        opts: ServeOptions,
+        storage: Box<dyn AgentStorage>,
+    ) -> Result<Self> {
+        check_folders(&folders)?;
+        Ok(Self::build(
+            endpoint,
+            Roots::Named(folders),
+            devices,
+            opts,
+            storage,
+        ))
+    }
+
+    fn build(
+        endpoint: Endpoint,
+        roots: Roots,
+        devices: DeviceList,
+        opts: ServeOptions,
+        storage: Box<dyn AgentStorage>,
+    ) -> Self {
         endpoint.set_alpns(vec![ALPN.to_vec()]);
         Self {
             inner: Arc::new(Inner {
-                root,
+                roots: RwLock::new(roots),
                 opts,
                 slots: Arc::new(Semaphore::new(opts.limits.max_connections)),
                 endpoint,
@@ -281,6 +413,30 @@ impl Agent {
         let mut list = self.devices();
         list.devices.retain(|d| d.id != *id);
         self.set_devices(list);
+    }
+
+    /// Replaces the shared folders (the app's add / stop sharing) and
+    /// switches a single-root agent to named folders. New requests see the
+    /// new list at once; a download that already started keeps its open
+    /// file. On an invalid or duplicate name nothing changes.
+    pub fn set_folders(&self, folders: Vec<SharedFolder>) -> Result<()> {
+        check_folders(&folders)?;
+        *self.inner.roots.write().expect("roots poisoned") = Roots::Named(folders);
+        Ok(())
+    }
+
+    /// Drops the active invite, if any (the owner cancelled it). It is
+    /// recorded as spent, so it is never accepted again.
+    pub fn cancel_invite(&self) {
+        let cleared = {
+            let mut current = self.inner.invite.lock().expect("invite poisoned");
+            if current.is_some() {
+                self.clear_invite(&mut current)
+            } else {
+                None
+            }
+        };
+        self.persist_cleared(cleared);
     }
 
     /// Whether a pairing invite is active.
@@ -452,7 +608,7 @@ impl Agent {
             conn.close(close::BUSY.into(), b"busy");
             return;
         };
-        let result = serve_one(&conn, &self.inner.root, &self.inner.opts.limits).await;
+        let result = serve_one(&conn, &self.inner.roots, &self.inner.opts.limits).await;
         conn.close(close::DONE.into(), b"done");
         if let Err(e) = result {
             eprintln!("connection from {fp} failed: {e:#}");
@@ -799,7 +955,7 @@ async fn step<T>(fut: impl Future<Output = Result<T>>) -> Result<T> {
 }
 
 /// One request, one response, on a connection from a paired device.
-async fn serve_one(conn: &Connection, root: &Path, limits: &Limits) -> Result<()> {
+async fn serve_one(conn: &Connection, roots: &RwLock<Roots>, limits: &Limits) -> Result<()> {
     let (mut send, request) = tokio::time::timeout(limits.handshake_timeout, async {
         let (send, mut recv) = conn.accept_bi().await?;
         let request: Request = read_frame_max(&mut recv, MAX_REQUEST_LEN).await?;
@@ -811,13 +967,13 @@ async fn serve_one(conn: &Connection, root: &Path, limits: &Limits) -> Result<()
     let idle = limits.idle_timeout;
     match request {
         Request::List { path } => {
-            let response = match list(root, &path).await {
+            let response = match list_target(roots, &path).await {
                 Ok(entries) => Response::List(entries),
                 Err(e) => Response::Error(format!("{e:#}")),
             };
             with_idle(idle, write_frame(&mut send, &response)).await?;
         }
-        Request::Get { path, offset } => match open_for_get(root, &path, offset).await {
+        Request::Get { path, offset } => match get_target(roots, &path, offset).await {
             Ok((file, size, offset, sha256)) => {
                 let header = Response::File {
                     size,
@@ -846,6 +1002,37 @@ async fn with_idle<T>(idle: Duration, fut: impl Future<Output = Result<T>>) -> R
     tokio::time::timeout(idle, fut)
         .await
         .context("peer stopped reading (idle timeout)")?
+}
+
+/// Looks `path` up in the shared folders (no lock is held across I/O).
+fn target(roots: &RwLock<Roots>, path: &str) -> Result<Target> {
+    roots.read().expect("roots poisoned").target(path)
+}
+
+async fn list_target(roots: &RwLock<Roots>, path: &str) -> Result<Vec<Entry>> {
+    match target(roots, path)? {
+        Target::Folders(folders) => Ok(folders
+            .into_iter()
+            .map(|f| Entry {
+                name: f.name,
+                is_dir: true,
+                size: 0,
+                mtime: 0,
+            })
+            .collect()),
+        Target::Inside { root, rest } => list(&root, &rest).await,
+    }
+}
+
+async fn get_target(
+    roots: &RwLock<Roots>,
+    path: &str,
+    offset: u64,
+) -> Result<(tokio::fs::File, u64, u64, [u8; 32])> {
+    match target(roots, path)? {
+        Target::Folders(_) => bail!("not a file: {path}"),
+        Target::Inside { root, rest } => open_for_get(&root, &rest, offset).await,
+    }
 }
 
 async fn list(root: &Path, path: &str) -> Result<Vec<Entry>> {
@@ -1007,6 +1194,110 @@ mod tests {
         assert!(!share_running(&fresh));
         let _held = hold_share_lock(&fresh).unwrap();
         assert!(share_running(&fresh));
+    }
+
+    fn named(dir: &Path) -> RwLock<Roots> {
+        let photos = dir.join("photos-on-disk");
+        let scans = dir.join("scans-on-disk");
+        std::fs::create_dir_all(photos.join("2026")).unwrap();
+        std::fs::create_dir_all(&scans).unwrap();
+        std::fs::write(photos.join("2026/a.jpg"), b"jpeg").unwrap();
+        std::fs::write(scans.join("scan.pdf"), b"pdf").unwrap();
+        std::fs::write(dir.join("secret.txt"), b"outside").unwrap();
+        RwLock::new(Roots::Named(vec![
+            SharedFolder {
+                name: "Photos".into(),
+                path: photos,
+            },
+            SharedFolder {
+                name: "Scans".into(),
+                path: scans,
+            },
+        ]))
+    }
+
+    #[tokio::test]
+    async fn named_folders_are_the_top_level_of_the_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = named(dir.path());
+        let top: Vec<(String, bool)> = list_target(&roots, "")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.name, e.is_dir))
+            .collect();
+        assert_eq!(top, [("Photos".into(), true), ("Scans".into(), true)]);
+        assert_eq!(list_target(&roots, ".").await.unwrap().len(), 2);
+        // The local folder names never show up.
+        let inside: Vec<String> = list_target(&roots, "Photos")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(inside, ["2026"]);
+        let (_, size, _, _) = get_target(&roots, "Photos/2026/a.jpg", 0).await.unwrap();
+        assert_eq!(size, 4);
+        let (_, size, _, _) = get_target(&roots, "Scans\\scan.pdf", 0).await.unwrap();
+        assert_eq!(size, 3);
+    }
+
+    #[tokio::test]
+    async fn named_folders_refuse_escapes_and_unknown_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = named(dir.path());
+        for bad in [
+            "/Photos",
+            "\\Photos",
+            "..",
+            "../secret.txt",
+            "Photos/../../secret.txt",
+            "Photos/../Scans/scan.pdf",
+            "photos-on-disk/2026/a.jpg",
+            "photos/2026/a.jpg",
+            "Nope",
+            "./Photos",
+            "C:/x",
+            "Photos:x",
+        ] {
+            assert!(list_target(&roots, bad).await.is_err(), "list {bad:?}");
+            assert!(get_target(&roots, bad, 0).await.is_err(), "get {bad:?}");
+        }
+        // The folder list and a folder are not files.
+        assert!(get_target(&roots, "", 0).await.is_err());
+        assert!(get_target(&roots, "Photos", 0).await.is_err());
+        // Errors name only what the peer asked for (SEC-10).
+        let err = format!("{:#}", get_target(&roots, "Nope/x", 0).await.unwrap_err());
+        assert!(!err.contains("disk"), "{err}");
+    }
+
+    #[test]
+    fn folder_names_are_single_plain_components() {
+        for ok in ["Photos", "Projects Q4", "Отчёты", "a.b", "Scans (2)"] {
+            assert!(check_folder_name(ok).is_ok(), "{ok:?}");
+        }
+        let long = "x".repeat(MAX_FOLDER_NAME + 1);
+        for bad in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            "a\\b",
+            "C:",
+            " x",
+            "x ",
+            "a\u{1b}b",
+            "x\u{202e}y",
+            long.as_str(),
+        ] {
+            assert!(check_folder_name(bad).is_err(), "{bad:?}");
+        }
+        let f = |n: &str| SharedFolder {
+            name: n.into(),
+            path: PathBuf::from("x"),
+        };
+        assert!(check_folders(&[f("A"), f("B")]).is_ok());
+        assert!(check_folders(&[f("Photos"), f("photos")]).is_err());
     }
 
     #[tokio::test]
