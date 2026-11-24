@@ -223,7 +223,15 @@ default: the OS computer name, `whoami --name` renames it). `pigeon-agent
 share`/`pair`/`devices` and `pigeon pair`/`ls`/`get`/`agents` all use it,
 and `pigeon-agent whoami` / `pigeon whoami` print the same name and
 fingerprint. `pigeon-agent reset --yes` now gives the computer a new key for
-both roles and says which remembered agents must be paired again.
+both roles and retires every old one (W-12): it also deletes the old
+`agent-key` / `client-key` entries, clears the migration state in
+`device.json` and every `legacy_key` mark, lists **all** remembered agents as
+needing a new pairing, and prints `pigeon-agent revoke <fp>` for each
+retired fingerprint (`identity::tests::reset_retires_the_old_client_key_and_all_marks`,
+binary test `reset_retires_every_old_key`). The `pigeon-agent pair` hint
+suggests `--name "<this computer's name>"` only with characters no shell acts
+on inside double quotes; the name may come from the OS, which employer IT
+controls on a work Mac (W-14, `identity::tests::hint_names_are_shell_inert`).
 
 **First run with both programs at once.** Reading an existing key takes no
 lock. Creating or migrating it runs under an OS file lock
@@ -258,7 +266,8 @@ under the same lock, on the first run of either program:
    client key and the entry to clean up in `device.json`, write
    `device-key` and read it back, then delete the old entry that is now a
    copy (`agent-key`, or `client-key` in the client-only case) **only if it
-   is byte-for-byte the device key** (compared by public key). A crash at any
+   is the same key** (equal Ed25519 public key, which implies the same
+   secret). A crash at any
    step leaves a state the next run finishes; an entry that is not a copy is
    never deleted (`interrupted_migration_is_finished_and_strangers_are_kept`).
 4. Proof that pairings survive in both directions:
@@ -276,7 +285,8 @@ under the same lock, on the first run of either program:
   agent's allow-list and already in this computer's keystore with the same
   protection; the fallback only keeps using it, for the same agents, for
   the same purpose (dialing out). It is never used to serve, never offered
-  in a new pairing, and is deleted automatically once unused.
+  in a new pairing, is deleted automatically once unused, and is retired by
+  `reset` together with the device key (W-12).
 - Revocation is unchanged: the owner can still cut the old key off with
   `pigeon-agent revoke <fingerprint>` on the agent side at any time.
 - "Re-pair now" would break the owner's two working pairings on the first
@@ -286,6 +296,14 @@ under the same lock, on the first run of either program:
 - It fails closed: if the old client key is missing, or an older build
   rewrites `agents.json` without the mark, `pigeon` dials with the device
   key, the agent refuses it ("not paired"), and the error says to pair again.
+- **Accepted risk (W-13):** if an older build rewrites `agents.json` (its
+  `pigeon pair` / `forget`), the marks are lost, and the next run of this
+  build sees no agent needing the old client key and deletes it, which
+  cannot be undone. The marked agents then refuse the device key: lost
+  availability (pair again), not lost security. Not mitigated because mixing
+  builds on one computer is not supported; the possible fix (delete only
+  after *this* build's `pair`/`forget` removed the last mark, recorded in
+  `device.json`) is noted for later.
 - Merging the roles does not widen the blast radius in practice: both
   per-role keys were in the same keystore, for the same OS user, readable by
   the same processes (A2). A stolen device key acts as that computer in both
@@ -305,15 +323,30 @@ is active again; iroh does not reconnect or fight over it). So while
 `pigeon ls`/`get` runs on a computer that also runs `pigeon-agent share`,
 new connections and relayed (not direct) traffic *to that computer's share*
 reach the short-lived `pigeon` process instead, which has no file ALPN and
-refuses them; the other computer's request fails or stalls until the `get`
-ends. Confidentiality is not affected (iroh TLS still authenticates both
-ends; the wrong process is the same user's own). Direct paths are not
-affected (`both_roles_with_one_key_at_once_over_direct_paths`). Mitigations
-in this change: the fetching side no longer **publishes** its address to
-n0's address lookup (it only resolves; `client::endpoint_builder`), so a
-`get` cannot replace the running agent's published record. Not mitigated
-(tracked as THREAT_MODEL R14): the relay slot. The real fix is one process
-holding one endpoint for both roles, which is the planned app.
+refuses them; the other computer's request fails or stalls for as long as
+the `get` runs (minutes for a large relayed file), and an in-flight relayed
+transfer can be dropped by the 30 s idle timeout. The reverse also happens:
+a `share` that starts while a `get` runs takes the slot from the `get`.
+Confidentiality is not affected (iroh TLS still authenticates both ends,
+keys are per connection, and the other process is the same user's own).
+Direct paths are not affected
+(`both_roles_with_one_key_at_once_over_direct_paths`). Mitigations in this
+change:
+- The fetching side no longer **publishes** its address to n0's address
+  lookup (it only resolves; `client::endpoint_builder`), so a `get` cannot
+  replace the running agent's published record. Proof: code review against
+  iroh 1.5.0 `presets::N0` (W-15); no automated test yet.
+- Interim warning (W-11): `pigeon-agent share` holds an OS lock
+  (`share.lock`, the same `FileLock`, no socket) for its lifetime and
+  refuses a second `share`; `pigeon ls`/`get`/`pair` only *try* it and print
+  one line saying the share here is reachable only over direct connections
+  while the command runs (`agent::tests::share_lock_is_visible_and_released`,
+  cli `tests::warns_only_while_a_share_runs_here`).
+
+Not mitigated (THREAT_MODEL R14): the relay slot itself. Exit criterion: the
+app runs both roles in one process on one endpoint. (Moving the CLI to
+another relay does not help: every relay connection, including the one used
+to reach a peer's relay, registers the endpoint ID.)
 
 Not verified: the migration on the owner's real Mac and PC (Keychain /
 Credential Manager entries made by the Day-5 builds), and whether macOS asks

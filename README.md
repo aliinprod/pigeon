@@ -45,7 +45,7 @@ Early builds are unsigned and come from GitHub Actions (repo access needed).
    `get` resumes an interrupted download, checks the SHA-256, and never overwrites: if `report.pdf` exists it saves `report (1).pdf` and prints the final path.
    Add `--relay-only` to `ls` or `get` to force the encrypted relay path (slower; for testing). Add `-v` to see the full error details if something fails.
 
-**Lost the PC, or done with it?** On the Mac: `./pigeon-agent devices` lists paired devices and `./pigeon-agent revoke "Home PC"` cuts one off at once (a running agent drops its connections within a second). `./pigeon-agent reset --yes` makes a new key for the Mac (for sharing *and* fetching) and forgets every pairing (restart a running `share` afterwards, then pair again in both directions).
+**Lost the PC, or done with it?** On the Mac: `./pigeon-agent devices` lists paired devices and `./pigeon-agent revoke "Home PC"` cuts one off at once (a running agent drops its connections within a second). `./pigeon-agent reset --yes` makes a new key for the Mac (for sharing *and* fetching), retires every old key including one left from an older build, and forgets every pairing. It prints a `pigeon-agent revoke <fingerprint>` command for each old key (run them on the other computers) and lists every agent to pair with again. Restart a running `share` afterwards.
 
 The Day-1 "ticket" is gone: anyone who ever saw one can no longer use it.
 
@@ -57,7 +57,7 @@ Builds before this change gave each program its own key, so each computer showed
 
 Nothing is deleted before the new key is stored and checked, and running the migration again changes nothing.
 
-**Known limit (command line only):** while `pigeon ls`/`get` runs on a computer that also runs `pigeon-agent share`, the relay sends that computer's traffic to the newer program, so the other computer cannot reach this one's share *through the relay* for those seconds (direct connections are not affected). The desktop app will run both roles in one program.
+**Known limit (command line only):** while `pigeon ls`/`get` runs on a computer that also runs `pigeon-agent share`, the relay sends that computer's traffic to the newer program, so the other computer cannot reach this one's share *through the relay* for as long as that command runs (direct connections are not affected). `pigeon` prints a one-line note when this applies. The desktop app will run both roles in one program.
 
 ### Any direction, any OS
 The steps above are the main case (office Mac shares, home PC fetches), but every build has both programs: **any machine can run `pigeon-agent share` and any machine can run `pigeon get`**. For example, to share a folder from a **Windows** PC and fetch from a **Mac**:

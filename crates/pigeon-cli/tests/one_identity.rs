@@ -147,6 +147,54 @@ fn both_programs_create_and_show_one_identity_at_once() {
     assert!(run(&cli_bin(), t.path(), &["agents"]).contains(&header));
 }
 
+/// W-12 through the real binaries: on a migrated two-key install,
+/// `pigeon-agent reset --yes` retires both old keys (and prints the revoke
+/// command for each), lists the remembered agent, and afterwards `pigeon`
+/// dials every agent with the new key only.
+#[test]
+fn reset_retires_every_old_key() {
+    let t = TestHome::new();
+    let store = store(&t.home);
+    let agent_key = SecretKey::generate();
+    let client_key = SecretKey::generate();
+    write_key(store.as_ref(), LEGACY_AGENT_KEY, &agent_key).unwrap();
+    write_key(store.as_ref(), LEGACY_CLIENT_KEY, &client_key).unwrap();
+    AgentList::update(&t.path().join(AGENTS_FILE), |l| {
+        l.upsert(PairedAgent {
+            id: SecretKey::generate().public(),
+            name: "Office Mac".into(),
+            relay_url: None,
+            paired_at: 1,
+            legacy_key: None,
+        });
+        Ok(())
+    })
+    .unwrap();
+    run(&cli_bin(), t.path(), &["whoami"]); // migrates
+    let out = run(&agent_bin(), t.path(), &["reset", "--yes"]);
+    for old in [&agent_key, &client_key] {
+        let line = format!("pigeon-agent revoke {}", fingerprint(&old.public()));
+        assert!(out.contains(&line), "{out}");
+    }
+    assert!(out.contains("Office Mac"), "{out}");
+    assert!(
+        read_key(store.as_ref(), LEGACY_CLIENT_KEY)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        read_key(store.as_ref(), LEGACY_AGENT_KEY)
+            .unwrap()
+            .is_none()
+    );
+    let new = read_key(store.as_ref(), DEVICE_KEY).unwrap().unwrap();
+    let whoami = run(&cli_bin(), t.path(), &["whoami"]);
+    assert_eq!(field(&whoami, "fingerprint"), fingerprint(&new.public()));
+    assert!(!whoami.contains("old key"), "{whoami}");
+    let agents = run(&cli_bin(), t.path(), &["agents"]);
+    assert!(!agents.contains("old key"), "{agents}");
+}
+
 /// The Day-5 state (agent key + client key, a device on the allow-list, an
 /// agent remembered) migrated by the real binaries, both at once: the agent
 /// key becomes the one key, the old client key stays for the remembered

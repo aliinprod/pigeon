@@ -216,6 +216,9 @@ async fn share(home: Home, dir: PathBuf, verbose: bool) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("folder not found: {}", dir.display()))?;
     anyhow::ensure!(root.is_dir(), "not a folder: {}", display_path(&root));
+    // Held until this process ends (W-11): `pigeon` warns while it is held,
+    // and a second `share` with the same key is refused.
+    let _share_lock = agent::hold_share_lock(&home.dir)?;
 
     // A stable device identity: the same endpoint ID after every restart,
     // and the same one `pigeon` uses on this computer.
@@ -344,11 +347,20 @@ fn pair_cmd(home: Home, name: Option<String>, ttl_hours: u64) -> Result<()> {
     println!("code: {}", code.reveal());
     eprintln!();
     eprintln!(
-        "On the other device run `pigeon pair <LINK> --name \"{}\"` and type the code.",
-        display_safe(&me.name).replace('"', "'")
+        "On the other device run `{}` and type the code.",
+        pair_hint(&me.name)
     );
     eprintln!("Keep `pigeon-agent share <DIR>` running; it picks up this invite within seconds.");
     Ok(())
+}
+
+/// The command to type on the other device. The name is reduced to
+/// characters no shell acts on inside double quotes (W-14), or left out.
+fn pair_hint(name: &str) -> String {
+    match identity::hint_name(name) {
+        Some(name) => format!("pigeon pair <LINK> --name \"{name}\""),
+        None => "pigeon pair <LINK>".into(),
+    }
 }
 
 fn devices_cmd(home: &Home) -> Result<()> {
@@ -400,7 +412,7 @@ fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
     );
     // Migrate first, so the agents paired with an old client key stay marked.
     let (_, store) = identity(home)?;
-    let key = identity::reset(&home.dir, store.as_ref())?;
+    let done = identity::reset(&home.dir, store.as_ref())?;
     store.delete(INVITE_SECRET)?;
     // Locked, like `revoke`: a pairing finishing in `share` cannot bring a
     // device back. The status file stays, so `pair` can warn if a `share`
@@ -409,29 +421,47 @@ fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
         list.devices.clear();
         Ok(())
     })?;
-    println!(
-        "reset done: this computer's new fingerprint is {}; every paired device was forgotten.",
-        fingerprint(&key.public())
-    );
-    // One key per computer: the agents this computer fetches from knew the old one.
-    let agents = AgentList::load(&home.dir.join(AGENTS_FILE))?;
-    let stale = agents
-        .agents
-        .iter()
-        .filter(|a| a.legacy_key.is_none())
-        .count();
-    if stale > 0 {
-        println!(
-            "The {stale} agent(s) this computer fetches from (`pigeon agents`) knew the old key: \
-             pair with each again (`pigeon-agent pair` there, `pigeon pair <LINK>` here)."
-        );
-    }
+    print!("{}", reset_report(&done));
     // M1: a running `share` keeps the old key in memory.
     println!(
         "If `pigeon-agent share` is running, stop it (Ctrl+C) and start it again now: it still \
          uses the old key, so new invites would not work with it. Then pair your devices again."
     );
     Ok(())
+}
+
+/// What `reset` tells the owner (W-12): the new fingerprint, every retired
+/// key with the revoke command for the other side, and every remembered
+/// agent (all of them knew a retired key).
+fn reset_report(done: &identity::Reset) -> String {
+    let mut out = format!(
+        "reset done: this computer's new fingerprint is {}; every paired device was forgotten.\n",
+        fingerprint(&done.key.public())
+    );
+    if !done.retired.is_empty() {
+        let fps: Vec<String> = done.retired.iter().map(fingerprint).collect();
+        out.push_str(&format!(
+            "Retired keys: {}. On every computer this one was paired with, remove them:\n",
+            fps.join(", ")
+        ));
+        for fp in &fps {
+            out.push_str(&format!("  pigeon-agent revoke {fp}\n"));
+        }
+    }
+    if !done.agents.is_empty() {
+        out.push_str(
+            "These agents this computer fetches from knew a retired key; pair with each again \
+             (`pigeon-agent pair` there, `pigeon pair <LINK>` here):\n",
+        );
+        for a in &done.agents {
+            out.push_str(&format!(
+                "  {} ({})\n",
+                display_safe(&a.name),
+                fingerprint(&a.id)
+            ));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -444,6 +474,60 @@ mod tests {
             home: Home::at(dir.to_path_buf()).unwrap(),
             store: Box::new(MemoryStore::default()),
         }
+    }
+
+    /// W-14: the printed `pigeon pair` hint carries no shell syntax from a
+    /// hostile computer name (e.g. one employer IT set on a work Mac).
+    #[test]
+    fn pair_hint_is_safe_to_paste() {
+        assert_eq!(
+            pair_hint("Office Mac"),
+            "pigeon pair <LINK> --name \"Office Mac\""
+        );
+        for hostile in [
+            "$(curl x|sh)",
+            "`id`",
+            "a\"b",
+            "$env:X",
+            "%X%",
+            "\\\"",
+            "!!",
+        ] {
+            let hint = pair_hint(hostile);
+            let quoted = hint.split_once("--name ").map(|(_, n)| n).unwrap_or("\"\"");
+            let inner = &quoted[1..quoted.len() - 1];
+            assert!(
+                !inner.contains(['$', '`', '"', '\\', '%', '!', '(', ')', '|']),
+                "{hostile:?} -> {hint}"
+            );
+        }
+        assert_eq!(pair_hint("$()``"), "pigeon pair <LINK>");
+    }
+
+    /// W-12: `reset` names every retired key (with the revoke command) and
+    /// every remembered agent.
+    #[test]
+    fn reset_report_lists_all_old_keys_and_agents() {
+        let old_device = iroh::SecretKey::from_bytes(&[1; 32]).public();
+        let old_client = iroh::SecretKey::from_bytes(&[2; 32]).public();
+        let report = reset_report(&identity::Reset {
+            key: iroh::SecretKey::from_bytes(&[3; 32]),
+            retired: vec![old_device, old_client],
+            agents: vec![pigeon_core::devices::PairedAgent {
+                id: iroh::SecretKey::from_bytes(&[4; 32]).public(),
+                name: "Office Mac".into(),
+                relay_url: None,
+                paired_at: 1,
+                legacy_key: None,
+            }],
+        });
+        for fp in [fingerprint(&old_device), fingerprint(&old_client)] {
+            assert!(
+                report.contains(&format!("pigeon-agent revoke {fp}")),
+                "{report}"
+            );
+        }
+        assert!(report.contains("Office Mac"), "{report}");
     }
 
     #[test]
