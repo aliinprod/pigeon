@@ -69,7 +69,7 @@
   </main>
 
   <footer class="foot">
-    <p>Atlas updates <a href="status.json">status.json</a> when work is handed out or finished. Pixel art drawn in code for this page. Behind a login. No trackers, no cookies.</p>
+    <p>Built from GitHub every 15 minutes: open and merged pull requests, CI results, and Atlas's notes in the Office status issue. Raw data: <a href="status.json">status.json</a>. Pixel art drawn in code for this page. Behind a login. No trackers, no cookies.</p>
   </footer>
 
   <!-- Fallback copy of status.json, used when the page is opened from the file system
@@ -77,8 +77,10 @@
   <script type="application/json" id="status-fallback">
 {
   "version": 1,
-  "updated_at": "2026-11-23T19:30:00Z",
-  "updated_by": "atlas",
+  "updated_at": "2026-11-24T04:56:56Z",
+  "updated_by": "github",
+  "source": "github",
+  "notes_issue": null,
   "agents": [
     {
       "id": "atlas",
@@ -86,25 +88,25 @@
       "role": "Coordinator",
       "about": "Splits work, delegates, reports to the owner, drafts the daily X post. Writes no product code.",
       "status": "working",
-      "task": "Coordinating; drafting Day 4 post",
+      "task": "Coordinating; Day 3 post drafted",
       "last_result": {
         "text": "Day 3 devlog and post draft",
         "url": "https://github.com/aliinprod/pigeon/blob/main/posts/day-3.md"
       },
-      "updated_at": "2026-11-23T18:25:00Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     },
     {
       "id": "anvil",
       "name": "Anvil",
       "role": "Rust core + CLI",
       "about": "Core protocol, the Mac agent and the CLI in Rust. Done means cargo test green on macOS and Windows CI.",
-      "status": "done",
-      "task": "Linux support + binaries",
+      "status": "working",
+      "task": "One key per computer (both roles)",
       "last_result": {
-        "text": "PR #9 merged: Linux support + binaries",
+        "text": "PR #9 merged: Linux support + binaries for pairing build",
         "url": "https://github.com/aliinprod/pigeon/pull/9"
       },
-      "updated_at": "2026-11-23T18:20:10Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     },
     {
       "id": "canvas",
@@ -112,12 +114,12 @@
       "role": "Desktop app UI",
       "about": "Desktop app UI (Tauri 2). Done means the app builds, with screenshots of each screen.",
       "status": "waiting",
-      "task": "One app, two roles design (PR #7): waiting for merge and PM decisions",
+      "task": "App design v2 (PR #7) waiting for merge",
       "last_result": {
-        "text": "PR #7 open: one app, Share + Get on macOS, Windows, Linux; PM decisions approved by owner",
+        "text": "PR #7 merged: App design: one app, Share + Get on macOS, Windows, Linux (prototype)",
         "url": "https://github.com/aliinprod/pigeon/pull/7"
       },
-      "updated_at": "2026-11-23T19:30:00Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     },
     {
       "id": "plume",
@@ -125,12 +127,12 @@
       "role": "Website",
       "about": "The website in site/: static HTML and CSS, no trackers. Done means screenshots at 390 and 1440 px, no console errors, links checked.",
       "status": "working",
-      "task": "Redesigning the office + login gate",
+      "task": "Office auto-update",
       "last_result": {
-        "text": "PR #8 merged: app screenshots on the site, live on flypigeon.pages.dev",
-        "url": "https://github.com/aliinprod/pigeon/pull/8"
+        "text": "PR #11 merged: Agent office: animated team dashboard (behind a login)",
+        "url": "https://github.com/aliinprod/pigeon/pull/11"
       },
-      "updated_at": "2026-11-23T19:30:00Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     },
     {
       "id": "warden",
@@ -138,12 +140,12 @@
       "role": "Security",
       "about": "Threat model, security requirements, design reviews before code, supply-chain checks and fuzzing in CI. Can block a PR on high or critical findings.",
       "status": "idle",
-      "task": null,
+      "task": "Will review one-key migration",
       "last_result": {
-        "text": "PR #6 security review: approve with follow-ups",
-        "url": "https://github.com/aliinprod/pigeon/pull/6#issuecomment-7097204911"
+        "text": "PR #4 merged: Security foundation: threat model, pairing design, security CI",
+        "url": "https://github.com/aliinprod/pigeon/pull/4"
       },
-      "updated_at": "2026-11-23T09:52:32Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     },
     {
       "id": "proof",
@@ -151,12 +153,12 @@
       "role": "Verifier",
       "about": "Turns risks into automated tests, reviews every PR and can reject it.",
       "status": "idle",
-      "task": null,
+      "task": "Will verify one-key PR",
       "last_result": {
         "text": "PR #6 verdict: pass with nits",
         "url": "https://github.com/aliinprod/pigeon/pull/6#issuecomment-7097281137"
       },
-      "updated_at": "2026-11-23T09:56:08Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     },
     {
       "id": "frame",
@@ -166,29 +168,17 @@
       "status": "done",
       "task": "Promo video v1",
       "last_result": {
-        "text": "PR #10 merged: 33.5 s promo, 16:9 and 1:1",
+        "text": "PR #10 merged: Promo video v1 (Frame)",
         "url": "https://github.com/aliinprod/pigeon/pull/10"
       },
-      "updated_at": "2026-11-23T11:42:42Z"
+      "updated_at": "2026-11-24T04:56:56Z"
     }
   ],
-  "owner_queue": [
-    {
-      "text": "Merge PR #7 (app design)",
-      "from": "canvas",
-      "url": "https://github.com/aliinprod/pigeon/pull/7"
-    },
-    {
-      "text": "Merge PR #11 (office) and set office login in Cloudflare",
-      "from": "plume",
-      "url": "https://github.com/aliinprod/pigeon/pull/11"
-    },
-    {
-      "text": "Test pairing build on the office Mac",
-      "from": "atlas",
-      "url": null
-    }
-  ]
+  "owner_queue": [],
+  "main_ci": {
+    "state": "failure",
+    "url": "https://github.com/aliinprod/pigeon/actions/runs/45250982648"
+  }
 }
   </script>
   <script src="office.js"></script>

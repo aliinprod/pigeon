@@ -1,0 +1,124 @@
+name: site-deploy
+
+# Builds the office status from GitHub (read-only) and deploys site/ + functions/ to
+# Cloudflare Pages (project flypigeon). Status is built at deploy time and is never
+# committed, so nothing here writes to main. See office/README.md.
+#
+# Every third-party action is pinned to a full commit SHA (tag in the comment).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "functions/**"
+      - "office/**"
+      - ".github/workflows/site-deploy.yml"
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read # the "Office status" issue
+  pull-requests: read # open and recently merged PRs
+  checks: read # CI results per PR
+  statuses: read # commit statuses per PR
+  actions: read # CI results on main
+
+concurrency:
+  group: site-deploy
+  cancel-in-progress: false
+
+env:
+  WRANGLER_VERSION: 4.160.0
+  SITE_URL: https://flypigeon.pages.dev
+
+jobs:
+  deploy:
+    name: build status + deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: test the status builder
+        run: node --test office/build-status.test.mjs
+
+      - name: build status.json from GitHub
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node office/build-status.mjs --fingerprint | tee build.out
+          fp="$(sed -n 's/^fingerprint=//p' build.out)"
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+          node office/sync-status.mjs
+          node office/sync-status.mjs --check
+
+      - name: check Cloudflare secrets
+        id: secrets
+        env:
+          HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          HAS_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: |
+          if [ "$HAS_TOKEN" = "true" ] && [ "$HAS_ACCOUNT" = "true" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            msg="Deploy skipped: add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets (see office/README.md)."
+            echo "::notice title=site-deploy::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Scheduled runs deploy only when the status (or the code) changed since the last deploy.
+      - name: look up the last deployed state
+        id: seen
+        if: steps.secrets.outputs.ok == 'true' && github.event_name == 'schedule'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: build.out
+          key: office-deployed-${{ github.sha }}-${{ steps.build.outputs.fingerprint }}
+          lookup-only: true
+
+      - name: nothing changed
+        if: steps.seen.outputs.cache-hit == 'true'
+        run: echo "Status and code unchanged since the last deploy; skipping." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: deploy to Cloudflare Pages (from the repo root, so functions/ is included)
+        id: deploy
+        if: steps.secrets.outputs.ok == 'true' && steps.seen.outputs.cache-hit != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -f functions/_middleware.js
+          npx --yes "wrangler@${WRANGLER_VERSION}" pages deploy site \
+            --project-name flypigeon --branch main --commit-dirty=true
+
+      - name: check the login gate and the home page
+        if: steps.deploy.outcome == 'success'
+        run: |
+          # The production alias can take a few seconds to switch over.
+          for i in 1 2 3 4 5 6; do
+            office="$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/office/")"
+            office_json="$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/office/status.json")"
+            home="$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/")"
+            echo "try $i: /office/ $office, /office/status.json $office_json, / $home"
+            if [ "$office" = "401" ] && [ "$office_json" = "401" ] && [ "$home" = "200" ]; then
+              echo "Gate OK: /office/ 401, / 200." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error title=site-deploy::expected /office/ 401, /office/status.json 401 and / 200; got $office, $office_json, $home. The office may be public: check functions/ was deployed."
+          exit 1
+
+      - name: remember the deployed state
+        if: steps.deploy.outcome == 'success'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: build.out
+          key: office-deployed-${{ github.sha }}-${{ steps.build.outputs.fingerprint }}

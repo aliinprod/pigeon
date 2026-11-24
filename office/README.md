@@ -12,6 +12,9 @@ no trackers. Google Fonts is the only outside request.
 | `site/office/status.json` | Single source of truth for the scene and the dashboard. |
 | `functions/_middleware.js` | Cloudflare Pages Function: the login gate for `/office` (see below). |
 | `office/sync-status.mjs` | Validates `status.json` and copies it into the fallback block in `index.html`. |
+| `office/build-status.mjs` | Builds `status.json` from GitHub and the "Office status" issue at deploy time (tests: `office/build-status.test.mjs`). |
+| `office/office-status-issue.md` | Template body for the "Office status" issue. |
+| `.github/workflows/site-deploy.yml` | Builds the status and deploys `site/` + `functions/` to Cloudflare Pages. |
 | `office/README.md` | This file. Kept outside `site/` so it is not deployed. |
 
 ## Run it locally
@@ -84,29 +87,105 @@ simulation forward), `?select=ID` (select a bot and open its tooltip), `?names=1
 
 ### Deploying
 
+Normally the **`site-deploy` workflow** (`.github/workflows/site-deploy.yml`) deploys for you: on every push to
+`main` that touches `site/`, `functions/` or `office/`, every 15 minutes (only when the status changed), and on
+demand (Actions → site-deploy → Run workflow). After each deploy it checks that `/office/` and
+`/office/status.json` answer `401` and `/` answers `200`, and fails the run otherwise. Until the two secrets below
+exist it builds the status and skips the deploy with a notice instead of failing.
+
+#### One-time setup by the owner: the two secrets
+
+1. Cloudflare dashboard → **My Profile** (top right) → **API Tokens** → **Create Token**.
+2. Either pick the **Edit Cloudflare Workers** template, or (tighter, preferred) **Create Custom Token** with exactly
+   one permission: **Account** › **Cloudflare Pages** › **Edit**. Under **Account Resources** choose
+   *Include* › your account only. Leave Zone resources empty. Optional: set a TTL.
+3. **Continue to summary** → **Create Token**. Copy the token (it is shown once).
+4. Copy your **Account ID**: Cloudflare dashboard → **Workers & Pages** → it is in the right column
+   ("Account details"), or in the URL `dash.cloudflare.com/<account id>/...`.
+5. GitHub → `aliinprod/pigeon` → **Settings** → **Secrets and variables** → **Actions** →
+   **New repository secret**:
+   - Name `CLOUDFLARE_API_TOKEN`, value: the token from step 3.
+   - Name `CLOUDFLARE_ACCOUNT_ID`, value: the account id from step 4.
+6. Actions → **site-deploy** → **Run workflow** (branch `main`). The run summary says "Gate OK" when it worked.
+
+The schedule only runs from `main`, so it starts after this workflow is merged. GitHub pauses scheduled
+workflows after 60 days without repository activity; re-enable it in the Actions tab if that happens.
+
+#### By hand
+
 Functions are only deployed when the `functions/` folder sits next to where Wrangler runs, so deploy from the
 **repo root**:
 
 ```
-npx.cmd wrangler@4 pages deploy site --project-name flypigeon
+npx.cmd wrangler@4 pages deploy site --project-name flypigeon --branch main
 ```
-
-(Use the project name shown in the dashboard if it is not `flypigeon`.)
 
 Dashboard "Direct Upload" of the `site` folder does **not** include Functions: the office would then be public.
 After every deploy, check that `https://flypigeon.pages.dev/office/` answers `401` without a login.
 
 ## How status.json is updated
 
-Atlas owns this file. When Atlas delegates a task, or a bot finishes, waits on the owner, or goes idle, Atlas edits
-`site/office/status.json` in the same PR as the work (or a small follow-up PR), then runs:
+Nobody commits status updates. `office/build-status.mjs` builds `site/office/status.json` at deploy time from two
+sources, then `office/sync-status.mjs` refreshes the embedded fallback copy in `index.html`. Both files change only
+inside the deploy runner. The committed `status.json` is the roster (ids, names, roles, about) and the default for
+any bot neither source mentions.
+
+**Source B: Atlas's notes.** One open issue titled exactly **Office status** (pinned), opened by the owner or a
+collaborator. Its body holds one line per bot:
 
 ```
-node office/sync-status.mjs          # validate + refresh the fallback copy in index.html
-node office/sync-status.mjs --check  # exits 1 if the copy is stale or the JSON is invalid
+anvil: working | One key per computer (both roles)
+warden: idle | Will review one-key migration
+owner: Test pairing build on the office Mac
 ```
 
-Only the owner merges to `main`, so the office shows what is merged, not what is in flight on a branch.
+`id: status | task`, status one of `working`, `done`, `waiting`, `idle`; the task is optional. `owner: text` adds an
+item to "Waiting for the owner". Only known ids count; the first line per bot wins; every other line (headings,
+prose, typos) is ignored. All text is treated as plain text: control characters are stripped, length is capped at
+160 characters, and the page renders it with `textContent` only. Atlas edits it whenever delegating or finishing:
+
+```
+gh issue edit <N> --body-file office-status.md
+```
+
+One-time creation (template in `office/office-status-issue.md`):
+
+```
+gh issue create --title "Office status" --body-file office/office-status-issue.md
+gh issue pin <N>
+```
+
+**Source A: GitHub.** Open PRs, PRs merged in the last 7 days, the CI result of each open PR, and CI on `main`
+(the latest run of each workflow on main's head commit, except site-deploy itself). A PR belongs to a bot by, in
+order: a `bot:<id>` label; a branch named `<id>/...` or `<id>-...`; a known branch prefix (`site-`, `office-`,
+`agent-office` → plume, `app-` → canvas, `security-` → warden, `promo-` → frame, `day-`, `week`, `linux-` → anvil,
+and so on, see `BRANCH_PREFIXES`); `(Name)` in the title; a `Bot: <id>` line in the body.
+
+The labels, one time:
+
+```
+for b in atlas anvil canvas plume warden proof frame; do gh label create "bot:$b" --color 555555 --description "Work by $b"; done
+```
+
+**Merge rules.** The note gives status and task. Then, per bot:
+- open PR with failing CI → status **waiting** (the "!" in the scene), result links to the failing run;
+- open PR, CI green, not a draft → result "green, waiting for the owner"; the owner queue gets
+  "Review/merge PR #N: title" (status stays as the note says, or **waiting** without a note);
+- open PR, CI running or draft → result links to the PR (**working** without a note);
+- no open PR but one merged in the last 7 days → result "PR #N merged" (**done** without a note).
+
+The dashboard says "Updated <time> from GitHub" and shows main CI (green, failing, running). The page re-reads
+`status.json` every 60 s. Scheduled runs skip the deploy when nothing changed, so "Updated" is when the data last
+changed (checked every 15 minutes).
+
+Local preview, read-only on GitHub (needs `gh auth login`):
+
+```
+node --test office/build-status.test.mjs                                            # unit tests for the builder
+node office/build-status.mjs --print                             # status from the real issue + PRs
+node office/build-status.mjs --print --notes office/office-status-issue.md   # with notes from a file
+node office/build-status.mjs && node office/sync-status.mjs      # write both files (do not commit them)
+```
 
 ## Schema
 
@@ -114,7 +193,9 @@ Only the owner merges to `main`, so the office shows what is merged, not what is
 {
   "version": 1,
   "updated_at": "2026-11-23T19:30:00Z",   // ISO 8601, UTC
-  "updated_by": "atlas",
+  "updated_by": "github",
+  "source": "github",                     // optional; the dashboard then says "from GitHub"
+  "notes_issue": "https://github.com/...", // optional, the Office status issue
   "agents": [
     {
       "id": "anvil",                       // lower case; known ids get a desk and a look in the scene
@@ -129,7 +210,8 @@ Only the owner merges to `main`, so the office shows what is merged, not what is
   ],
   "owner_queue": [
     { "text": "Merge PR #7 (app design)", "from": "canvas", "url": "https://github.com/..." }
-  ]
+  ],
+  "main_ci": { "state": "failure", "url": "https://github.com/.../actions/runs/..." }  // optional: success | failure | pending | none
 }
 ```
 
