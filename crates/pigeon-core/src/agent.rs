@@ -683,6 +683,8 @@ pub const SHARE_LOCK: &str = "share";
 /// programs only *try* the lock ([`share_running`]). A second `share` for
 /// the same computer is refused: it would fight the first for the relay slot.
 pub fn hold_share_lock(config_dir: &Path) -> Result<crate::devices::FileLock> {
+    // On a fresh install `share` runs before anything created the config dir.
+    crate::config::ensure_private_dir(config_dir)?;
     crate::devices::FileLock::acquire_for(
         &config_dir.join(SHARE_LOCK),
         Duration::ZERO,
@@ -994,6 +996,17 @@ mod tests {
         drop(held);
         assert!(!share_running(dir.path()));
         assert!(hold_share_lock(dir.path()).is_ok());
+    }
+
+    /// Fresh install (caught by the macOS cross-network CI job): the default
+    /// config dir does not exist yet when `share` takes the lock.
+    #[test]
+    fn share_lock_creates_a_missing_config_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("Library/Application Support/Pigeon");
+        assert!(!share_running(&fresh));
+        let _held = hold_share_lock(&fresh).unwrap();
+        assert!(share_running(&fresh));
     }
 
     #[tokio::test]

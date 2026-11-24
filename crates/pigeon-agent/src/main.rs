@@ -411,7 +411,12 @@ fn reset_cmd(home: &Home, yes: bool) -> Result<()> {
          paired device; run again with --yes"
     );
     // Migrate first, so the agents paired with an old client key stay marked.
-    let (_, store) = identity(home)?;
+    // If the old key is unreadable (or was removed), reset anyway: that is
+    // the way out the error message points to.
+    if let Err(e) = identity(home) {
+        eprintln!("note: {e:#}");
+    }
+    let store = home.store()?;
     let done = identity::reset(&home.dir, store.as_ref())?;
     store.delete(INVITE_SECRET)?;
     // Locked, like `revoke`: a pairing finishing in `share` cannot bring a

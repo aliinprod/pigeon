@@ -88,18 +88,44 @@ pub fn read_key(store: &dyn SecretStore, name: &str) -> Result<Option<SecretKey>
     Ok(Some(SecretKey::from_bytes(bytes)))
 }
 
+/// Like [`read_key`], but "not found" is only believed after it was seen 4
+/// times over ~150 ms. Windows Credential Manager can report "not found"
+/// for an existing entry while other credentials are being written (seen in
+/// stress tests with 8-14 parallel writers). Use this wherever "not found"
+/// leads to creating or migrating a key.
+pub fn read_key_settled(store: &dyn SecretStore, name: &str) -> Result<Option<SecretKey>> {
+    for attempt in 0..4 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if let Some(key) = read_key(store, name)? {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
+}
+
 /// Stores `key` as `name` and reads it back: an error unless the store now
 /// returns exactly this key.
+///
+/// Windows Credential Manager can report "not found" for an entry just
+/// written by `CredWriteW` while other credentials are being written at the
+/// same time (~1 in 1600 read-backs with 8 parallel writers). So "not
+/// found" is retried for up to ~1 s; a *different* key is an error at once.
 pub fn write_key(store: &dyn SecretStore, name: &str, key: &SecretKey) -> Result<()> {
     let bytes = Zeroizing::new(key.to_bytes());
     store.set(name, &bytes[..])?;
-    match read_key(store, name)? {
-        Some(back) if back.public() == key.public() => Ok(()),
-        _ => bail!(
-            "saved the device key `{name}` in {}, but reading it back gave something else",
-            store.describe()
-        ),
+    for _ in 0..50 {
+        match read_key(store, name)? {
+            Some(back) if back.public() == key.public() => return Ok(()),
+            Some(_) => break,
+            None => std::thread::sleep(std::time::Duration::from_millis(20)),
+        }
     }
+    bail!(
+        "saved the device key `{name}` in {}, but reading it back gave something else",
+        store.describe()
+    )
 }
 
 /// The store to use on this machine. `namespace` keeps separate config dirs

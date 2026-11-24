@@ -82,17 +82,32 @@ fn store(home: &Home) -> Box<dyn SecretStore> {
     }
 }
 
+/// One test at a time: each test already runs several programs at once on
+/// purpose, and Windows Credential Manager can report "not found" for an
+/// entry just written while many other entries are being written (seen as
+/// a flaky failure here, about 1 run in 5). The product handles that
+/// (`keystore::read_key_settled`, `write_key` retries, and fail-closed
+/// `identity::load`); the tests should not depend on that much contention.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A temporary home whose keystore entries are deleted afterwards.
 struct TestHome {
     _dir: tempfile::TempDir,
     home: Home,
+    // Declared last: released after the cleanup in `drop`.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 impl TestHome {
     fn new() -> Self {
+        let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at(dir.path().join("pigeon")).unwrap();
-        Self { _dir: dir, home }
+        Self {
+            _dir: dir,
+            home,
+            _serial: serial,
+        }
     }
 
     fn path(&self) -> &Path {

@@ -39,10 +39,17 @@ impl Home {
     pub fn from_env() -> Result<Self> {
         match std::env::var_os(HOME_ENV) {
             Some(dir) if !dir.is_empty() => Self::at(PathBuf::from(dir)),
-            _ => Ok(Self {
-                dir: default_dir()?,
-                namespace: String::new(),
-            }),
+            _ => {
+                // Created owner-only up front, like `at` does: lock files
+                // (`share.lock`, `*.json.lock`) are opened before anything
+                // else would have created it on a fresh install.
+                let dir = default_dir()?;
+                ensure_private_dir(&dir)?;
+                Ok(Self {
+                    dir,
+                    namespace: String::new(),
+                })
+            }
         }
     }
 

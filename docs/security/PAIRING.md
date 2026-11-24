@@ -243,6 +243,18 @@ before anything else happens. Tests: `identity::tests::concurrent_first_run_crea
 real binaries `both_programs_create_and_show_one_identity_at_once` (4 + 4
 processes) and `binaries_migrate_a_two_key_install`.
 
+**A key that reads as missing is never replaced.** Stress tests on Windows
+showed Credential Manager reporting "not found" for an *existing* entry
+while many other credentials were being written (and for a just-written
+one). So: "not found" on the create path is only believed after 4 reads
+over ~150 ms (`keystore::read_key_settled`), `write_key` retries its
+read-back for ~1 s, and `device.json` records the device key's public ID
+once it is stored. If the store later says the key is missing on a computer
+that had one, Pigeon stops with an error naming the fingerprint (nothing
+changed, try again; `pigeon-agent reset --yes` if it was removed on
+purpose) instead of creating a new identity
+(`identity::tests::missing_key_on_a_known_computer_fails_closed`).
+
 **Migration from a two-key install** (the owner's Mac and PC after Day 5), once,
 under the same lock, on the first run of either program:
 

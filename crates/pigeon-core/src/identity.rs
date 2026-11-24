@@ -151,6 +151,11 @@ struct DeviceFile {
     /// the device key (set before the device key is written).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     cleanup: Vec<String>,
+    /// The device key's public ID, recorded once `device-key` is stored. If
+    /// the store then says "not found", the key is unreadable (or was
+    /// removed outside Pigeon), never "first run": no new key is made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<EndpointId>,
 }
 
 fn read_device_file(dir: &Path) -> Result<DeviceFile> {
@@ -192,10 +197,24 @@ pub fn load(dir: &Path, store: &dyn SecretStore) -> Result<Identity> {
         Some(key) => (key, Origin::Existing),
         None => {
             let _lock = create_lock(dir)?;
-            match keystore::read_key(store, DEVICE_KEY)? {
+            // "Not found" is only believed when seen several times (Windows
+            // Credential Manager can report it for an existing entry).
+            match keystore::read_key_settled(store, DEVICE_KEY)? {
                 // Another program created it while we waited.
                 Some(key) => (key, Origin::Existing),
-                None => create_or_migrate(dir, store, &mut notes)?,
+                None => {
+                    if let Some(id) = read_device_file(dir)?.id {
+                        // Fail closed: never replace a key this computer had.
+                        bail!(
+                            "this computer's key {} is not readable from {} right now (nothing \
+                             was changed; try again). If it was removed on purpose, run \
+                             `pigeon-agent reset --yes`",
+                            fingerprint(&id),
+                            store.describe()
+                        );
+                    }
+                    create_or_migrate(dir, store, &mut notes)?
+                }
             }
         }
     };
@@ -208,9 +227,14 @@ pub fn load(dir: &Path, store: &dyn SecretStore) -> Result<Identity> {
             read_device_file(dir).ok().and_then(|f| f.legacy_client)
         }
     };
-    let name = match read_device_file(dir)?.name {
-        Some(name) => name,
-        None => update_device_file(dir, |f| f.name.get_or_insert_with(default_name).clone())?,
+    let file = read_device_file(dir)?;
+    let name = match (file.name, file.id == Some(key.public())) {
+        (Some(name), true) => name,
+        // First run, or a key from before the id was recorded.
+        _ => update_device_file(dir, |f| {
+            f.id = Some(key.public());
+            f.name.get_or_insert_with(default_name).clone()
+        })?,
     };
     Ok(Identity {
         key,
@@ -227,8 +251,8 @@ fn create_or_migrate(
     store: &dyn SecretStore,
     notes: &mut Vec<String>,
 ) -> Result<(SecretKey, Origin)> {
-    let agent = keystore::read_key(store, LEGACY_AGENT_KEY)?;
-    let client = keystore::read_key(store, LEGACY_CLIENT_KEY)?;
+    let agent = keystore::read_key_settled(store, LEGACY_AGENT_KEY)?;
+    let client = keystore::read_key_settled(store, LEGACY_CLIENT_KEY)?;
     let (key, origin, from) = match (agent, &client) {
         (Some(a), _) => (a, Origin::FromAgentKey, Some(LEGACY_AGENT_KEY)),
         (None, Some(c)) => (c.clone(), Origin::FromClientKey, Some(LEGACY_CLIENT_KEY)),
@@ -266,6 +290,7 @@ fn create_or_migrate(
         }
     })?;
     keystore::write_key(store, DEVICE_KEY, &key)?;
+    update_device_file(dir, |f| f.id = Some(id))?;
     let fp = fingerprint(&id);
     notes.push(match origin {
         Origin::Created => format!("created this computer's key {fp} in {}", store.describe()),
@@ -374,6 +399,7 @@ pub fn reset(dir: &Path, store: &dyn SecretStore) -> Result<Reset> {
     update_device_file(dir, |f| {
         f.legacy_client = None;
         f.cleanup.clear();
+        f.id = Some(key.public());
     })?;
     let agents = AgentList::update(&dir.join(AGENTS_FILE), |list| {
         for a in &mut list.agents {
@@ -736,6 +762,28 @@ mod tests {
         let after = load(dir.path(), &store).unwrap();
         assert_eq!(after.id(), new.key.public());
         assert_eq!(after.name, before.name, "the name stays");
+    }
+
+    /// A keystore that says "not found" for a key this computer had (a
+    /// Credential Manager hiccup, or an entry removed outside Pigeon) is an
+    /// error, never a reason to make a new identity; `reset` still works.
+    #[test]
+    fn missing_key_on_a_known_computer_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MemoryStore::default();
+        let me = load(dir.path(), &store).unwrap();
+        store.delete(DEVICE_KEY).unwrap();
+        let err = format!("{:#}", load(dir.path(), &store).err().unwrap());
+        assert!(
+            err.contains(&me.fingerprint()) && err.contains("reset"),
+            "{err}"
+        );
+        assert!(
+            read_key(&store, DEVICE_KEY).unwrap().is_none(),
+            "no new key"
+        );
+        let new = reset(dir.path(), &store).unwrap();
+        assert_eq!(load(dir.path(), &store).unwrap().id(), new.key.public());
     }
 
     /// W-12: on a migrated two-key install, reset retires *every* old key
