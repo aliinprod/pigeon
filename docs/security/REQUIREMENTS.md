@@ -70,10 +70,12 @@ against key-based access).
 | ID | Requirement | Status | Proof |
 |---|---|---|---|
 | SEC-24 | Dependencies: exact versions, `Cargo.lock` with `--locked`, no known vulnerabilities, permissive licenses, crates.io only. | met | `security.yml` job `cargo-deny` (`cargo deny --locked check`), weekly + per PR |
-| SEC-25 | All third-party GitHub Actions are pinned to full commit SHAs, and every workflow sets minimal `permissions:`. | met | review of `.github/workflows/*.yml`. TODO: automated check (e.g. zizmor) |
+| SEC-25 | All third-party GitHub Actions are pinned to full commit SHAs, and every workflow sets minimal `permissions:`. | met | `.github/scripts/check-workflows.sh` (SEC-32); pins checked against their tags 2026-11-24 |
 | SEC-26 | No secrets in the repository history. | met | `security.yml` job `gitleaks` (full history) |
 | SEC-27 | Release binaries are signed (macOS: Developer ID + notarization; Windows: Authenticode) and published with SHA-256 sums. | partial | SHA256SUMS in `binaries.yml`; signing not yet (needs owner approval: paid accounts) |
 | SEC-28 | Parsers are fuzzed with coverage guidance. | not yet | proptest covers stable; cargo-fuzz targets (nightly) later |
+| SEC-31 | The `/office/` login gate has no credentials or hashes in code, reads only `OFFICE_USER_SHA256` / `OFFICE_PASS_SHA256`, and fails closed (`503`, page never served) when either is missing or malformed; encoded paths to `/office` are gated too. | met | `office/middleware.test.mjs` (`security.yml` job `office-gate`) |
+| SEC-32 | Workflows are safe for a public repo: no `pull_request_target` / `workflow_run`, no `${{ github.event.* }}` / `head_ref` interpolation, no `secrets: inherit`, a top-level `permissions:` block, every action pinned to a 40-hex SHA, and no artifact holds a secret. | met (static), pending first run | `.github/scripts/check-workflows.sh` (`security.yml` job `workflow-check`; negative fixture tested locally); artifacts: `cross-network.yml` step "encrypt the code to the client's public key" refuses to upload a plaintext code; gitleaks SARIF upload off |
 
 [e2e]: ../../crates/pigeon-core/tests/e2e.rs
 [pairing]: ../../crates/pigeon-core/tests/pairing.rs

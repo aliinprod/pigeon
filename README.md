@@ -5,7 +5,7 @@
 
 Fetch files from your work computer while you're at home. No VPN, no open ports, no cloud copy of your files.
 
-> Status: early, built in public. Expect rough edges.
+> **Status: early, pre-release, not audited.** Built in public. Builds are **unsigned** test builds from GitHub Actions: your OS will warn about them, and you should check the `SHA256SUMS.txt` that comes with each one. Don't use it for files you can't afford to leak, and follow your employer's rules about moving work files. Security reports: see [SECURITY.md](SECURITY.md).
 
 ## How it works
 1. **Agent** runs on your work Mac and shares only the folders you choose.
@@ -15,7 +15,7 @@ Fetch files from your work computer while you're at home. No VPN, no open ports,
 Files stay on the Mac. Only the copy you fetch lands at home.
 
 ## Try it
-Early builds are unsigned and come from GitHub Actions (repo access needed).
+Early builds are unsigned and come from GitHub Actions (download needs a free GitHub account).
 
 1. **Download** the latest run of the [`binaries` workflow](../../actions/workflows/binaries.yml):
    `pigeon-macos-universal` for a Mac (Apple Silicon + Intel), `pigeon-windows-x64` for a Windows PC, `pigeon-linux-x86_64` for Linux (static build, any distro). Each comes with a `SHA256SUMS.txt`.

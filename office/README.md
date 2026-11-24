@@ -11,6 +11,7 @@ no trackers. Google Fonts is the only outside request.
 | `site/office/office.css` | Page chrome: brand colours and fonts, light and dark. |
 | `site/office/status.json` | Single source of truth for the scene and the dashboard. |
 | `functions/_middleware.js` | Cloudflare Pages Function: the login gate for `/office` (see below). |
+| `office/middleware.test.mjs` | Tests for the login gate: no hashes in code, fails closed (`node --test office/middleware.test.mjs`). |
 | `office/sync-status.mjs` | Validates `status.json` and copies it into the fallback block in `index.html`. |
 | `office/README.md` | This file. Kept outside `site/` so it is not deployed. |
 
@@ -53,21 +54,30 @@ simulation forward), `?select=ID` (select a bot and open its tooltip), `?names=1
 
 - Credentials are stored **only as SHA-256 hex hashes**. The middleware hashes the submitted username and password
   with Web Crypto and compares both hashes in constant time. No plaintext username or password is in the repo.
-- **Defaults are hardcoded** in `functions/_middleware.js` (`DEFAULT_USER_SHA256`, `DEFAULT_PASS_SHA256`), set by the
-  owner. They work with no Cloudflare configuration.
-- **Warning:** a hash of a short password is not a secret. A 4-digit password has 10,000 possibilities; anyone who can
-  read this repo can try them all in well under a second. That is acceptable only while the repo is private. If the
-  repo ever becomes public (or before it does), rotate to a long password via the env vars below.
+- **The hashes live only in Cloudflare**, as the Pages variables `OFFICE_USER_SHA256` and `OFFICE_PASS_SHA256`
+  (type Secret). There are **no defaults in code**: this repository is public, and a hash of a short password in it
+  is cracked offline in milliseconds. If either variable is missing or is not 64 hex characters, every `/office`
+  request gets `503 Office login is not configured.` and the page is never served (fail closed). Test:
+  `node --test office/middleware.test.mjs` (SEC-31, also in `security.yml`).
+- **Burned credential:** until 2026-11-24 the code held default hashes of the first office login (a 4-digit
+  password). They are still in the git history and the password was recovered from its hash in 6 ms during the
+  public-readiness audit. That username/password must never be used again, anywhere.
+- **Pick a strong password:** at least 16 random characters from a password manager (or 5+ random words). The hash
+  is only as strong as the password: a short one is guessable offline if the hash ever leaks (e.g. from a
+  Cloudflare export), and online through Basic Auth, which has no rate limit here.
 - Responses carry `Cache-Control: no-store`, `X-Robots-Tag: noindex` and `Referrer-Policy: no-referrer`. Plain http
   requests are redirected to https before any credentials are asked for.
-- Fail closed: if a configured hash is malformed, every `/office` request gets `503`, never the page.
+- Fail closed: if a hash is missing or malformed, every `/office` request gets `503`, never the page.
 - The gate runs as root middleware on every request and checks the decoded, lower-cased, dot-segment-resolved path,
   because a percent-encoded path such as `/%6Fffice/` would otherwise skip an `/office/*` route and still be served
   by the asset server (found and fixed during the local test). Every site request therefore invokes a Function;
   the free plan allows 100,000 a day.
 - Basic Auth has no logout: the browser remembers the login until it is closed.
 
-### Rotate the login (no code change)
+### Set or rotate the login (no code change)
+
+Do this **before** deploying a version of `functions/_middleware.js` without defaults (2026-11-24 or later),
+otherwise `/office` answers `503` until the variables are set.
 
 1. Compute the two hashes locally. In PowerShell, this reads the value without echoing it and without it landing in
    the command history (run it once for the username, once for the password):
@@ -79,8 +89,9 @@ simulation forward), `?select=ID` (select a bot and open its tooltip), `?names=1
 2. Cloudflare dashboard → **Workers & Pages** → **flypigeon** → **Settings** → **Variables and Secrets** →
    **Add**: `OFFICE_USER_SHA256` = the username hash, `OFFICE_PASS_SHA256` = the password hash. Choose type
    **Secret** (encrypted) for both, for the **Production** environment (and Preview if you use preview URLs).
-3. Redeploy (variables apply to new deployments). The env vars now override the hardcoded defaults.
-4. Check: `curl -I https://flypigeon.pages.dev/office/` must return `401`.
+3. Redeploy (variables apply to new deployments).
+4. Check: `curl -I https://flypigeon.pages.dev/office/` must return `401` (a `503` means a variable is missing or
+   malformed), and the new login must open the page.
 
 ### Deploying
 

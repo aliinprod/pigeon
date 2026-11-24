@@ -64,3 +64,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: "false" # no write permission needed
+          # Public repo: anyone can download artifacts, and a SARIF report of a
+          # real finding would publish the secret again. Findings go to the log
+          # (redacted) and fail the job.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  office-gate:
+    name: office login gate fails closed (SEC-31)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: node --test office/middleware.test.mjs
+        run: |
+          node --version
+          node --test office/middleware.test.mjs
+
+  workflow-check:
+    name: workflows safe for a public repo (SEC-25, SEC-32)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: check-workflows.sh
+        run: bash .github/scripts/check-workflows.sh
