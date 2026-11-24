@@ -1,7 +1,7 @@
 // node --test office/build-status.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseNotes, botForPr, rollup, merge, cleanText, cleanUrl, fingerprint } from './build-status.mjs';
+import { parseNotes, botForPr, rollup, merge, cleanText, cleanUrl, fingerprint, trustedPr } from './build-status.mjs';
 
 const ids = new Set(['atlas', 'anvil', 'canvas', 'plume', 'warden', 'proof', 'frame']);
 const roster = {
@@ -9,7 +9,11 @@ const roster = {
   owner_queue: [],
 };
 const now = new Date('2026-11-24T12:00:00Z');
-const R = 'https://github.com/o/r';
+const REPO = 'o/r';
+const OWNER = 'o';
+const R = 'https://github.com/' + REPO;
+// A PR by the owner from a branch of this repo (the only kind that counts).
+const own = (pr) => ({ author: { login: OWNER }, isCrossRepository: false, headRepositoryOwner: { login: 'o' }, headRepository: { name: 'r' }, ...pr });
 
 test('parseNotes: strict lines, known ids only, first line wins', () => {
   const body = [
@@ -68,14 +72,14 @@ test('merge: notes give task, red CI forces waiting, green PR goes to the owner 
   const green = [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }];
   const prs = {
     open: [
-      { number: 12, title: 'One key', url: R + '/pull/12', headRefName: 'anvil/one-key', updatedAt: '2026-11-24T10:00:00Z', statusCheckRollup: red },
-      { number: 13, title: 'Design v2', url: R + '/pull/13', headRefName: 'app-v2', updatedAt: '2026-11-24T11:00:00Z', statusCheckRollup: green },
+      own({ number: 12, title: 'One key', url: R + '/pull/12', headRefName: 'anvil/one-key', updatedAt: '2026-11-24T10:00:00Z', statusCheckRollup: red }),
+      own({ number: 13, title: 'Design v2', url: R + '/pull/13', headRefName: 'app-v2', updatedAt: '2026-11-24T11:00:00Z', statusCheckRollup: green }),
     ],
     merged: [
-      { number: 10, title: 'Promo video v1 (Frame)', url: R + '/pull/10', headRefName: 'promo-video', mergedAt: '2026-11-23T11:42:42Z' },
+      own({ number: 10, title: 'Promo video v1 (Frame)', url: R + '/pull/10', headRefName: 'promo-video', mergedAt: '2026-11-23T11:42:42Z' }),
     ],
   };
-  const s = merge({ roster, notes, issue: { updated_at: '2026-11-24T09:00:00Z', html_url: R + '/issues/1' }, prs, mainCi: { state: 'failure', url: R + '/actions/runs/5' }, repoUrl: R, now });
+  const s = merge({ roster, notes, issue: { updated_at: '2026-11-24T09:00:00Z', html_url: R + '/issues/1' }, prs, mainCi: { state: 'failure', url: R + '/actions/runs/5' }, repo: REPO, owner: OWNER, now });
   const get = (id) => s.agents.find((a) => a.id === id);
   assert.equal(get('anvil').status, 'waiting');
   assert.equal(get('anvil').task, 'One key');
@@ -88,6 +92,26 @@ test('merge: notes give task, red CI forces waiting, green PR goes to the owner 
   assert.deepEqual(s.owner_queue.map((q) => q.text), ['Review/merge PR #13: Design v2', 'Test on the Mac']);
   assert.equal(s.main_ci.state, 'failure');
   assert.equal(s.source, 'github');
-  const later = merge({ roster, notes, issue: { updated_at: '2026-11-24T09:00:00Z', html_url: R + '/issues/1' }, prs, mainCi: { state: 'failure', url: R + '/actions/runs/5' }, repoUrl: R, now: new Date('2026-11-24T13:00:00Z') });
+  const later = merge({ roster, notes, issue: { updated_at: '2026-11-24T09:00:00Z', html_url: R + '/issues/1' }, prs, mainCi: { state: 'failure', url: R + '/actions/runs/5' }, repo: REPO, owner: OWNER, now: new Date('2026-11-24T13:00:00Z') });
   assert.equal(fingerprint(s), fingerprint(later)); // build time does not trigger a redeploy
+});
+
+test('W-13: fork PRs and PRs by anyone but the owner are ignored everywhere', () => {
+  const green = [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }];
+  const fork = { number: 20, title: 'Site tweak (Plume)', url: R + '/pull/20', headRefName: 'site-evil', updatedAt: '2026-11-24T10:00:00Z', statusCheckRollup: green,
+    author: { login: OWNER }, isCrossRepository: true, headRepositoryOwner: { login: 'stranger' }, headRepository: { name: 'r' } };
+  const stranger = { number: 21, title: 'Bump (Anvil)', url: R + '/pull/21', headRefName: 'anvil/x', updatedAt: '2026-11-24T10:00:00Z', statusCheckRollup: green,
+    author: { login: 'stranger' }, isCrossRepository: false, headRepositoryOwner: { login: 'o' }, headRepository: { name: 'r' } };
+  const lookalike = { ...fork, number: 22, isCrossRepository: false, headRepositoryOwner: { login: 'o-fake' } };
+  const merged = { ...stranger, number: 23, title: 'Merged by a stranger (Frame)', headRefName: 'promo-x', mergedAt: '2026-11-24T09:00:00Z' };
+  assert.equal(trustedPr(own({}), REPO, OWNER), true);
+  for (const p of [fork, stranger, lookalike, merged, {}, null]) assert.equal(trustedPr(p, REPO, OWNER), false);
+  assert.equal(trustedPr({ ...own({}), author: undefined }, REPO, OWNER), false);
+  const s = merge({ roster, notes: parseNotes('', ids), issue: null, prs: { open: [fork, stranger, lookalike], merged: [merged] }, mainCi: null, repo: REPO, owner: OWNER, now });
+  assert.deepEqual(s.owner_queue, []);
+  for (const a of s.agents) {
+    assert.equal(a.status, 'idle', a.id);
+    assert.equal(a.last_result, null, a.id);
+  }
+  assert.ok(!JSON.stringify(s).includes('/pull/2'));
 });

@@ -14,6 +14,7 @@
 //   node office/build-status.mjs --print            print, write nothing
 //   node office/build-status.mjs --fingerprint      also print "fingerprint=<sha256>" (content minus timestamps)
 //   node office/build-status.mjs --repo OWNER/NAME  default: $GITHUB_REPOSITORY, else `gh repo view`
+//   node office/build-status.mjs --owner LOGIN      only PRs by this account count (default aliinprod)
 //   node office/build-status.mjs --notes FILE       local preview: read the notes from FILE instead of the issue
 // Needs `gh` logged in (locally) or GH_TOKEN (in Actions). Then run office/sync-status.mjs
 // to refresh the fallback copy in index.html.
@@ -120,10 +121,31 @@ export function rollup(checks) {
   return { state: any ? 'success' : 'none', url: null };
 }
 
+// ---------- trust ----------
+// The repo is public: anyone can open a PR from a fork with a branch like "site-x" or a title
+// like "(Plume)". Only PRs opened by the owner account from a branch of this repo count;
+// everything else is ignored, so a stranger's PR never shows in the office or the owner queue.
+export const OWNER_LOGIN = 'aliinprod';
+export function trustedPr(pr, repo, owner = OWNER_LOGIN) {
+  const [repoOwner, repoName] = String(repo || '').toLowerCase().split('/');
+  const login = (o) => String((o && o.login) || '').toLowerCase();
+  return !!pr && !!repoOwner && !!repoName
+    && pr.isCrossRepository === false
+    && login(pr.headRepositoryOwner) === repoOwner
+    && String((pr.headRepository && pr.headRepository.name) || '').toLowerCase() === repoName
+    && login(pr.author) === String(owner).toLowerCase();
+}
+
 // ---------- merge ----------
 // roster: committed status.json. notes: parseNotes() result plus issue meta. prs: {open, merged}.
-export function merge({ roster, notes, issue, prs, mainCi, repoUrl, now }) {
+// repo: "owner/name". PRs that fail trustedPr() are dropped before anything else.
+export function merge({ roster, notes, issue, prs, mainCi, repo, owner = OWNER_LOGIN, now }) {
   const ids = new Set(roster.agents.map((a) => a.id));
+  const repoUrl = 'https://github.com/' + repo;
+  prs = {
+    open: (prs.open || []).filter((p) => trustedPr(p, repo, owner)),
+    merged: (prs.merged || []).filter((p) => trustedPr(p, repo, owner)),
+  };
   const byBot = {};
   for (const id of ids) byBot[id] = { open: [], merged: [] };
   for (const pr of prs.open) { const b = botForPr(pr, ids); if (b) byBot[b].open.push({ ...pr, ci: rollup(pr.statusCheckRollup) }); }
@@ -208,7 +230,7 @@ function gh(args) {
 const ghJson = (args) => JSON.parse(gh(args));
 
 function fetchAll(repo, now) {
-  const fields = 'number,title,body,url,headRefName,labels,isDraft,updatedAt';
+  const fields = 'number,title,body,url,headRefName,labels,isDraft,updatedAt,author,isCrossRepository,headRepository,headRepositoryOwner';
   const open = ghJson(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', fields + ',statusCheckRollup']);
   const since = new Date(now.getTime() - MERGED_DAYS * 864e5).toISOString().slice(0, 10);
   const merged = ghJson(['pr', 'list', '--repo', repo, '--state', 'merged', '--limit', '100', '--search', `merged:>=${since}`, '--json', fields + ',mergedAt']);
@@ -224,7 +246,7 @@ function fetchAll(repo, now) {
   const runs = ghJson(['api', `repos/${repo}/actions/runs?head_sha=${sha}&per_page=100`]).workflow_runs || [];
   const latest = {};
   for (const r of runs) {
-    if (r.name === 'site-deploy' || r.head_branch !== 'main') continue;
+    if (r.name === 'site-deploy' || r.head_branch !== 'main' || (r.head_repository && r.head_repository.full_name !== repo)) continue;
     if (!latest[r.workflow_id] || r.run_number > latest[r.workflow_id].run_number) latest[r.workflow_id] = r;
   }
   let mainCi = { state: 'none', url: null };
@@ -255,7 +277,7 @@ function main() {
   const notes = issue ? parseNotes(issue.body, ids) : { bots: {}, owner: [] };
   if (!issue) console.error(`warning: no open issue titled "${ISSUE_TITLE}" by the owner or a collaborator; using the committed statuses`);
 
-  const status = merge({ roster, notes, issue, prs: { open, merged }, mainCi, repoUrl: `https://github.com/${repo}`, now });
+  const status = merge({ roster, notes, issue, prs: { open, merged }, mainCi, repo, owner: opt('--owner') || OWNER_LOGIN, now });
   const text = JSON.stringify(status, null, 2) + '\n';
   if (argv.includes('--print')) process.stdout.write(text);
   else { writeFileSync(out, text); console.error(`wrote ${out}: ${status.agents.length} agents, ${status.owner_queue.length} owner items, ${open.length} open PRs, ${merged.length} merged in ${MERGED_DAYS} days, main CI ${status.main_ci.state}`); }

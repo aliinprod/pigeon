@@ -93,7 +93,16 @@ demand (Actions → site-deploy → Run workflow). After each deploy it checks t
 `/office/status.json` answer `401` and `/` answers `200`, and fails the run otherwise. Until the two secrets below
 exist it builds the status and skips the deploy with a notice instead of failing.
 
-#### One-time setup by the owner: the two secrets
+The post-deploy check passes only on `401`, which needs both the gate (`functions/`) and the login env vars
+`OFFICE_USER_SHA256` / `OFFICE_PASS_SHA256` in Cloudflare (see "Rotate the login"). If those vars are missing or
+malformed the gate answers `503` (office closed, not public) and the run fails with a message saying so; set the
+vars and re-run. A `200` on `/office/` fails the run as "office is PUBLIC".
+
+The workflow has two jobs: `plan` (no secrets) builds the status and decides; `deploy` runs in the GitHub
+environment **`production`**, which holds the Cloudflare secrets and only accepts the `main` branch. No other
+branch and no pull request can read the secrets.
+
+#### One-time setup by the owner: the `production` environment and its two secrets
 
 1. Cloudflare dashboard → **My Profile** (top right) → **API Tokens** → **Create Token**.
 2. Either pick the **Edit Cloudflare Workers** template, or (tighter, preferred) **Create Custom Token** with exactly
@@ -102,11 +111,20 @@ exist it builds the status and skips the deploy with a notice instead of failing
 3. **Continue to summary** → **Create Token**. Copy the token (it is shown once).
 4. Copy your **Account ID**: Cloudflare dashboard → **Workers & Pages** → it is in the right column
    ("Account details"), or in the URL `dash.cloudflare.com/<account id>/...`.
-5. GitHub → `aliinprod/pigeon` → **Settings** → **Secrets and variables** → **Actions** →
-   **New repository secret**:
+5. GitHub → `aliinprod/pigeon` → **Settings** → **Environments** → **New environment** → name `production` →
+   **Configure environment**.
+6. Under **Deployment branches and tags**, choose **Selected branches and tags** → **Add deployment branch or tag
+   rule** → ref type **Branch**, name pattern `main` → **Add rule**. (No required reviewers: the schedule must run
+   unattended.)
+7. Still on that page, under **Environment secrets** → **Add environment secret**:
    - Name `CLOUDFLARE_API_TOKEN`, value: the token from step 3.
    - Name `CLOUDFLARE_ACCOUNT_ID`, value: the account id from step 4.
-6. Actions → **site-deploy** → **Run workflow** (branch `main`). The run summary says "Gate OK" when it worked.
+
+   Do not add them as repository secrets (Settings → Secrets and variables → Actions); if they already exist there,
+   delete them so only the `production` environment has them.
+8. Make sure the Cloudflare Pages project has `OFFICE_USER_SHA256` and `OFFICE_PASS_SHA256` set (see "Rotate the
+   login"), otherwise the post-deploy check fails on `503`.
+9. Actions → **site-deploy** → **Run workflow** (branch `main`). The run summary says "Gate OK" when it worked.
 
 The schedule only runs from `main`, so it starts after this workflow is merged. GitHub pauses scheduled
 workflows after 60 days without repository activity; re-enable it in the Actions tab if that happens.
@@ -156,7 +174,12 @@ gh issue pin <N>
 ```
 
 **Source A: GitHub.** Open PRs, PRs merged in the last 7 days, the CI result of each open PR, and CI on `main`
-(the latest run of each workflow on main's head commit, except site-deploy itself). A PR belongs to a bot by, in
+(the latest run of each workflow on main's head commit, except site-deploy itself).
+
+Only PRs **opened by the owner account (`aliinprod`) from a branch of this repo** count (`trustedPr()`; W-13).
+Fork PRs and PRs by anyone else are dropped before anything else, so a stranger can never put text in the office
+or in the owner queue by naming a branch `site-...` or writing "(Plume)" in a title. A bot's PR therefore has to
+be opened with the owner's `gh` login, as all of them are today. A trusted PR belongs to a bot by, in
 order: a `bot:<id>` label; a branch named `<id>/...` or `<id>-...`; a known branch prefix (`site-`, `office-`,
 `agent-office` → plume, `app-` → canvas, `security-` → warden, `promo-` → frame, `day-`, `week`, `linux-` → anvil,
 and so on, see `BRANCH_PREFIXES`); `(Name)` in the title; a `Bot: <id>` line in the body.
