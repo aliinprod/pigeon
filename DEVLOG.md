@@ -22,3 +22,12 @@ Format per day: **Did / Broke / Next**, plus numbers and a screenshot when there
 - **Did:** Coming-soon site live at https://flypigeon.pages.dev (EN/UZ/RU, FAQ). New bots: Plume (web design) and Warden (security). Security foundation: threat model, 28 requirements, pairing design, cargo-deny + gitleaks in CI, all actions pinned to SHAs, 9 property tests.
 - **Broke:** Warden found the Day-1 ticket is effectively a password with no expiry (fix: week-2 pairing) and fixed 5 small issues; Proof caught Warden's own filter mangling Persian names and emoji.
 - **Next:** Agent on the real office Mac, fetch from home; then pairing. Decide on our own relay after seeing whether the office allows a direct path.
+
+## Day 5 — 2026-11-24
+- **Did:** First real test of pairing, both directions, office Mac ↔ home Windows PC on two networks (Mac binaries from run 45233355571; Windows built locally from f273292). No ticket anywhere: invite link + 4-word code, then `ls`/`get` with no secret on the command line.
+- **Office Mac → home PC:** paired first try; 50 MiB in 3.06 s (17.2 MB/s, direct), SHA-256 OK. No-overwrite worked (`big-test (1).bin`).
+- **Home PC → office Mac:** paired first try; 50 MiB in 68.6 s (0.77 MB/s, direct), SHA-256 OK. Still direct, so the limit is most likely the home connection's upload speed, not Pigeon (not measured separately yet).
+- **Keychain:** no macOS prompt on first start or during pairing.
+- **Found:** each machine uses two different keys for its two roles (Mac: agent `pudlfeb6`, client `h2233blt`; PC: agent `fijzhrns`, client `pqnvbqnt`). The owner approved "one name and one key per computer" for the app, so this needs a change (Anvil, reviewed by Warden).
+- **Also shipped:** agent office at flypigeon.pages.dev/office/ behind a login (401 checked live), site app screenshots, promo video v1, Linux CI + binaries, app design v2 (one app, Share + Get).
+- **Next:** one key per computer; measure home upload speed to confirm the 0.77 MB/s cause; desktop app (Tauri) starts.
