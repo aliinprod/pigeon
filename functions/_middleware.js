@@ -7,13 +7,12 @@
 // request passes through here, and the gate is applied to the decoded, normalised path.
 // Requests outside /office go straight to the static site.
 //
-// Credentials are stored only as SHA-256 hex hashes. The defaults below are the owner's
-// current login; setting OFFICE_USER_SHA256 and OFFICE_PASS_SHA256 in the Pages project
-// (Settings -> Variables and Secrets) overrides them without a code change.
-// See office/README.md. Never put a plaintext username or password in this repo.
-
-const DEFAULT_USER_SHA256 = 'ee62ad8efed4e7d0bd8bb8aa1f4947fdf2174cdda947eeb2c7cc0ea154ec3dd8';
-const DEFAULT_PASS_SHA256 = 'da26b77becf8bcc17aa4e59a0205d8910373e5a25e0d7993fd5b2856c21ecdbb';
+// Credentials are stored only as SHA-256 hex hashes, and ONLY in the Cloudflare Pages
+// project (Settings -> Variables and Secrets): OFFICE_USER_SHA256 and OFFICE_PASS_SHA256.
+// There are no defaults in code. This repository is public; a hash in it would be
+// brute-forced offline in seconds. If either variable is missing or malformed, every
+// /office request gets 503 (fail closed), never the page. See office/README.md.
+// Never put a username, password or hash in this repo.
 
 const REALM = 'Pigeon office';
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -99,10 +98,10 @@ export async function onRequest(context) {
     return Response.redirect(url.toString(), 308);
   }
 
-  const userHex = String((env && env.OFFICE_USER_SHA256) || DEFAULT_USER_SHA256).trim().toLowerCase();
-  const passHex = String((env && env.OFFICE_PASS_SHA256) || DEFAULT_PASS_SHA256).trim().toLowerCase();
-  // Fail closed: a malformed hash never lets anyone in.
-  if (!HEX64.test(userHex) || !HEX64.test(passHex)) return plain(503, 'Office login is not configured correctly.');
+  const userHex = String((env && env.OFFICE_USER_SHA256) || '').trim().toLowerCase();
+  const passHex = String((env && env.OFFICE_PASS_SHA256) || '').trim().toLowerCase();
+  // Fail closed: a missing or malformed hash never lets anyone in.
+  if (!HEX64.test(userHex) || !HEX64.test(passHex)) return plain(503, 'Office login is not configured.');
 
   const creds = readBasic(request.headers.get('Authorization'));
   if (!creds) return unauthorized();
