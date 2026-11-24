@@ -6,15 +6,27 @@ name: cross-network
 # Pairing hand-off between the two parallel jobs (the real user flow:
 # `pigeon-agent pair` on the Mac, `pigeon pair` on Windows, then ls/get with
 # no ticket):
-#   agent  --upload-artifact--> pigeon-invite-<attempt>      --poll REST API--> client
-#   client --upload-artifact--> pigeon-client-done-<attempt> --poll REST API--> agent
+#   client --upload-artifact--> pigeon-client-pubkey-<attempt> --poll--> agent
+#   agent  --upload-artifact--> pigeon-invite-<attempt>        --poll--> client
+#   client --upload-artifact--> pigeon-client-done-<attempt>   --poll--> agent
 # (v4 artifacts are listed by the API as soon as their upload step finishes.)
-# The artifact holds the invite link and its 4-word code. The code is
-# single use and expires in 12 h; it only lives in this private repo's
-# artifacts (1-day retention) and is masked in every log.
-# CHECKLIST before making the repository public (W-10, THREAT_MODEL R12):
-# anyone could then download the artifact and race this job; generate the
-# code differently or shorten the window first.
+#
+# The repository is public, so ANYONE with a GitHub account can download the
+# artifacts of a run while it is still going (W-10, THREAT_MODEL R12). So no
+# artifact may hold a secret:
+# - The client job makes a throwaway RSA-3072 key pair first. Only the PUBLIC
+#   key is uploaded; the private key never leaves the Windows runner's temp dir.
+# - The agent encrypts the 4-word code to that public key (OpenSSL RSA-OAEP,
+#   a standard primitive used only as CI glue, not product crypto) and uploads
+#   the invite link (not secret by design, PAIRING.md), the ciphertext and the
+#   test files' SHA-256 sums. The plaintext code exists only on the two runners.
+# - Both runners are ephemeral GitHub-hosted VMs: the agent, its Keychain
+#   entry, the client key and the private RSA key are destroyed when the jobs
+#   end. A downloaded artifact is useless after the run: the invite is single
+#   use, expires after 1 h (`--ttl 1`) and points at an agent that no longer
+#   exists. During the run, someone with the link alone can at most burn the
+#   invite's 3 attempts (the run fails; no data is exposed).
+# Artifacts are kept 1 day. The code is masked in every log.
 
 on:
   workflow_dispatch:
@@ -47,6 +59,7 @@ env:
   SIZE_MIB: ${{ inputs.size_mib || '10' }}
   # The public relay was measured at ~30 KB/s, so keep the relay-only file small.
   RELAY_MIB: ${{ inputs.relay_mib || '1' }}
+  PUBKEY_ARTIFACT: pigeon-client-pubkey-${{ github.run_attempt }}
   INVITE_ARTIFACT: pigeon-invite-${{ github.run_attempt }}
   DONE_ARTIFACT: pigeon-client-done-${{ github.run_attempt }}
 
@@ -59,6 +72,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
         with:
           toolchain: stable
@@ -102,19 +117,34 @@ jobs:
             exit 1
           fi
           # stdout carries the link and the code: files only, never the log.
-          target/release/pigeon-agent pair --name "CI Windows runner" \
-            >"$RUNNER_TEMP/pair.out" 2>"$RUNNER_TEMP/pair.err"
-          sed -n 's/^link: //p' "$RUNNER_TEMP/pair.out" >"$RUNNER_TEMP/handoff/link"
-          code=$(sed -n 's/^code: //p' "$RUNNER_TEMP/pair.out")
+          # The plaintext code stays in secret/, which is never uploaded.
+          mkdir -p "$RUNNER_TEMP/secret"
+          chmod 700 "$RUNNER_TEMP/secret"
+          target/release/pigeon-agent pair --name "CI Windows runner" --ttl 1 \
+            >"$RUNNER_TEMP/secret/pair.out" 2>"$RUNNER_TEMP/pair.err"
+          sed -n 's/^link: //p' "$RUNNER_TEMP/secret/pair.out" >"$RUNNER_TEMP/handoff/link"
+          code=$(sed -n 's/^code: //p' "$RUNNER_TEMP/secret/pair.out")
           if [ -z "$code" ] || [ ! -s "$RUNNER_TEMP/handoff/link" ]; then
             echo "::error::pigeon-agent pair printed no invite"
             cat "$RUNNER_TEMP/pair.err"
             exit 1
           fi
           echo "::add-mask::$code"
-          printf '%s\n' "$code" >"$RUNNER_TEMP/handoff/code"
-          rm -f "$RUNNER_TEMP/pair.out"
+          printf '%s\n' "$code" >"$RUNNER_TEMP/secret/code"
+          rm -f "$RUNNER_TEMP/secret/pair.out"
           cat "$RUNNER_TEMP/agent.err"
+      - name: encrypt the code to the client's public key
+        run: |
+          bash .github/scripts/wait-artifact.sh "$PUBKEY_ARTIFACT" "$RUNNER_TEMP/clientpub" 1800
+          openssl pkeyutl -encrypt -pubin -inkey "$RUNNER_TEMP/clientpub/client.pub" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -in "$RUNNER_TEMP/secret/code" -out "$RUNNER_TEMP/handoff/code.enc"
+          rm -f "$RUNNER_TEMP/secret/code"
+          # Fail closed: the upload below must never carry a plaintext code.
+          if [ -e "$RUNNER_TEMP/handoff/code" ] || [ ! -s "$RUNNER_TEMP/handoff/code.enc" ]; then
+            echo "::error::handoff is not safe to upload"; exit 1
+          fi
+          ls "$RUNNER_TEMP/handoff"
       - name: publish invite
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -150,25 +180,52 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release
+      - name: make a throwaway key pair for the code hand-off
+        run: |
+          # Private key: this runner's temp dir only, never uploaded or logged.
+          mkdir -p "$RUNNER_TEMP/secret" "$RUNNER_TEMP/clientpub"
+          chmod 700 "$RUNNER_TEMP/secret"
+          ( umask 077
+            openssl genpkey -quiet -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+              -out "$RUNNER_TEMP/secret/client.key" )
+          openssl pkey -in "$RUNNER_TEMP/secret/client.key" -pubout \
+            -out "$RUNNER_TEMP/clientpub/client.pub"
+          grep -q 'BEGIN PUBLIC KEY' "$RUNNER_TEMP/clientpub/client.pub"
+          if grep -q PRIVATE "$RUNNER_TEMP/clientpub/client.pub"; then
+            echo "::error::refusing to upload a private key"; exit 1
+          fi
+      - name: publish the public key
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.PUBKEY_ARTIFACT }}
+          path: ${{ runner.temp }}/clientpub/client.pub
+          retention-days: 1
+          if-no-files-found: error
       - name: build
         run: cargo build --release --locked -p pigeon-cli
       - name: get invite
         run: |
           bash .github/scripts/wait-artifact.sh "$INVITE_ARTIFACT" "$RUNNER_TEMP/handoff" 1800
-          echo "::add-mask::$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/code")"
+          openssl pkeyutl -decrypt -inkey "$RUNNER_TEMP/secret/client.key" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -in "$RUNNER_TEMP/handoff/code.enc" -out "$RUNNER_TEMP/secret/code"
+          echo "::add-mask::$(tr -d '\r\n' <"$RUNNER_TEMP/secret/code")"
       - name: pigeon pair
         run: |
           # The code comes from a file, never an argument (TH-14). The client
           # key goes to Windows Credential Manager (real keystore).
           link=$(tr -d '\r\n' <"$RUNNER_TEMP/handoff/link")
           target/release/pigeon.exe pair "$link" --name "CI macOS runner" \
-            --code-file "$RUNNER_TEMP/handoff/code"
+            --code-file "$RUNNER_TEMP/secret/code"
+          rm -f "$RUNNER_TEMP/secret/code" "$RUNNER_TEMP/secret/client.key"
           target/release/pigeon.exe agents
       - name: pigeon ls
         run: |
