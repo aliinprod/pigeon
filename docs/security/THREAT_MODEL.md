@@ -4,7 +4,9 @@ Owner: Warden. Status: **pre-release, not audited**. Covers the code as of
 the week-1 pairing PR: key-based access with an allow-list, pairing per
 [PAIRING.md](PAIRING.md) (implemented; deviations in its section 9),
 persistent device keys in the OS keystore, connection limits. The Day-1
-bearer ticket is removed. Requirements live in
+bearer ticket is removed. **The repository is treated as public from
+2026-11-24** (source, history, PR refs, Actions logs and artifacts readable
+by anyone; see [PUBLIC_REPO.md](PUBLIC_REPO.md)). Requirements live in
 [REQUIREMENTS.md](REQUIREMENTS.md) (SEC-xx). Update this file whenever the
 protocol, auth, storage or relay usage changes.
 
@@ -53,6 +55,7 @@ flowchart LR
 | B4 | Human channel | invite link (email/chat) and 4-word code (screen, photo) | link has no secret; code is single use, 12 h, 3 attempts, never on the network, and useless offline (PAKE) |
 | B5 | Relay / discovery | encrypted packets, endpoint IDs, IPs | iroh end-to-end encryption; relay is untrusted |
 | B6 | Build / supply chain | crates, GitHub Actions, binaries | `Cargo.lock --locked`, pinned crate versions, cargo-deny, SHA-pinned actions |
+| B7 | Public repo -> CI and `main` | fork PRs, issues, anyone reading history, logs and artifacts | `pull_request` only (no secrets, read-only token for forks), approval for outside contributors' workflows, `check-workflows.sh`, no secret in any artifact, ruleset on `main` (PRs only, no force push / deletion), only the owner can push ([PUBLIC_REPO.md](PUBLIC_REPO.md)) |
 
 ## 2. Assets
 
@@ -65,6 +68,7 @@ flowchart LR
 | A4 Home copies | Fetched files + `.part` files on the home PC | Same sensitivity as A1, now on a less-managed machine |
 | A5 Metadata | File names, sizes, mtimes, endpoint IDs, IP addresses, transfer timing | Leaks what the owner works on and when |
 | A6 Build integrity | Source, `Cargo.lock`, CI workflows, release binaries | A backdoored binary bypasses every other control |
+| A8 Office login | `/office/` Basic Auth on Cloudflare Pages; hashes only in the Pages project (`OFFICE_USER_SHA256` / `OFFICE_PASS_SHA256`) | Protects the team dashboard (low sensitivity: it shows data that is public in the repo anyway). The **first** login's hashes are in git history and its 4-digit password is **burned** (W-11) |
 
 ## 3. Actors
 
@@ -79,6 +83,7 @@ flowchart LR
 | T7 Supply-chain attacker | Compromises a crate, a GitHub Action or a CI runner | Backdoor binaries, steal CI secrets |
 | T8 Curious employer IT | Admin on the Mac and network; DLP, TLS inspection, EDR | Detect/inspect exfiltration; read keys from the Mac |
 | T9 Local user / process on the Mac | Write access to the shared folder (e.g. a synced team folder) | Plant symlinks or race the agent to read outside the share |
+| T10 Anyone on GitHub | Reads the whole repo, history, PR refs, Actions logs and artifacts; forks; opens PRs and issues; can download a running job's artifacts | Find secrets, take over CI or `main`, slip a change in through a PR that looks like a bot's |
 
 T8 is not an attacker in the legal sense: Pigeon must not try to hide from the
 employer. The work Mac belongs to them. We document what they can see and do
@@ -117,6 +122,10 @@ function and test names instead (line numbers drift).
 | TH-25 | Spoofing | A used invite comes back after a restart because its keystore delete failed (W-5) | T4 | Spent invite IDs are kept in `spent-invites.json` (not secret) and checked before an invite is activated; an unreadable record fails closed; storage I/O runs outside the invite mutex (`used_invite_does_not_come_back_after_a_restart`, `spent_invites_are_remembered_and_fail_closed`) | M (fixed in review) |
 | TH-26 | Tampering | `revoke` and a pairing completing in `share` race on `devices.json` and undo each other (W-4) | owner | Read-modify-write only under `devices.json.lock` (`DeviceList::update`; `concurrent_updates_lose_nothing`) | M (fixed in review) |
 | TH-22 | Spoofing | Someone who sees link **and** code before the owner pairs pairs first | T4, T8 | Single use: the owner's own attempt then fails with "no active invite" (loud); `pigeon-agent devices` shows the extra device; `revoke` is one command; the agent logs every pairing. OS notification deferred | P (residual by design, PAIRING.md section 6) |
+| TH-29 | Info disclosure | Credential material in the public history: the first `/office/` login's SHA-256 hashes (4-digit password, cracked in 6 ms in the audit) | T10 | No defaults in code any more; the gate reads only Cloudflare env vars and fails closed with `503` (`office/middleware.test.mjs`, SEC-31); the old password is burned and must not be reused; the new one is 16+ random characters. gitleaks + manual scan of all refs found no other secret (PUBLIC_REPO.md section 1) | M (W-11) |
+| TH-30 | Spoofing | A stranger downloads the running cross-network job's invite artifact and pairs with the CI agent first | T10 | The artifact holds no secret: the code is RSA-OAEP-encrypted to a throwaway key whose private half never leaves the client runner; invite 1 h TTL, single use; both runners are ephemeral and share only random bytes (W-10). Residual: the link lets a stranger burn the 3 attempts and fail the run (CI DoS) | M |
+| TH-31 | Tampering / Elevation | A fork PR gets secrets or a write token, or injects into a workflow script; a change reaches `main` without the owner | T10, T7 | Only `pull_request` triggers, top-level minimal `permissions:`, no `github.event.*` in scripts, SHA-pinned actions (all enforced by `check-workflows.sh`, SEC-32); fork-PR workflows wait for approval; ruleset on `main` (PR required, no force push or deletion, required checks); no collaborators besides the owner. Residual: bots use the owner's token, so GitHub cannot stop a bot from merging (process rule) | P (settings apply after the flip) |
+| TH-32 | Spoofing (social) | A stranger's fork PR is shown in the office dashboard as a bot's work and in the owner queue as "Review/merge" (PR #12 `build-status.mjs` maps PRs by branch/title) | T10 | Requirement on PR #12: only PRs from this repo by the owner (W-13) | O (PR #12 not merged) |
 | TH-23 | Spoofing | Stolen home PC (or its unlocked session, or malware running as the user) reuses its device key | T5 | Key in Windows Credential Manager / macOS Keychain (not a plain file); revoke from the Mac, in-process and through the CLI file path (`revoke_closes_a_live_transfer_within_a_second`, `revoke_through_the_devices_file_closes_a_live_transfer`) | P (an unlocked session or same-user malware can use the key until revoked, A2) |
 
 ## 5. Open risks, ranked
@@ -127,7 +136,9 @@ function and test names instead (line numbers drift).
 | R2 | ~~Secret on the command line (TH-14)~~ | resolved (week 1) | No secret in argv; code via file / env / prompt |
 | R3 | ~~No connection/concurrency limits; authenticated tasks never time out (TH-08)~~ | resolved (week 1) | `agent::Limits` + tests |
 | R11 | macOS Keychain item is in the login keychain without `...ThisDeviceOnly` (needs a signed app, PAIRING.md D2); a Time Machine / migrated keychain carries it to another Mac. Each unsigned rebuild re-prompts for Keychain access, training "Always Allow"; on Windows same-user processes read the key with no prompt (W-9, A2) | Low | Revisit with code signing (R5) |
-| R12 | The cross-network CI artifact holds a live invite link + code for 1 day. Fine while the repo is private; if it becomes public, any logged-in GitHub user could download it and race the Windows job (W-10) | Low (ephemeral runner, random data) | Before changing repo visibility: generate the code inside the client job instead, or drop the artifact retention to the minimum and keep the race window short |
+| R12 | ~~The cross-network CI artifact holds a live invite link + code (W-10)~~ | resolved (2026-11-24) | Code encrypted to a per-run client key; see TH-30. Not yet proven on real runners (Actions blocked by billing until the flip) |
+| R15 | Public history keeps the burned office hashes and 14 merge commits with the owner's personal email (W-11, W-12) | Low | Not rewritten (no live secret). Old office password never reused; GitHub email privacy on. Making the repo private again does not remove anything already copied (PUBLIC_REPO.md section 4) |
+| R16 | Bots push and open PRs with the owner's GitHub token, so a bot could merge (TH-31) | Low | Process rule (only the owner merges). Later: a separate bot account + one required owner approval |
 | R13 | `$PIGEON_PAIR_CODE` stays in the client process environment for the process lifetime, and `spake2` 0.4.0 does not zeroize its password copy / scalar (W-7) | Low (single use, short-lived) | Prefer the prompt or `--code-file`; revisit when spake2 adds zeroize. Removing the env var needs `unsafe` `remove_var` before threads start |
 | R4 | Third-party relay and discovery metadata; employer DLP visibility (TH-17) | Medium (privacy) | Document in README; self-hosted relay option later |
 | R5 | Unsigned binaries from CI artifacts | Medium | Sign + notarize at release (owner approval: Apple Developer) |
