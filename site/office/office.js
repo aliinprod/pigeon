@@ -1399,7 +1399,16 @@
     const tEl = el('time', null, tm.abs);
     tEl.dateTime = data.updated_at || '';
     up.append(document.createTextNode('Updated '), tEl, document.createTextNode(` (${tm.rel})`));
-    $('#source').textContent = dataSource === 'live' ? 'from status.json' : 'from the copy embedded in this page';
+    const fromGh = data.source === 'github';
+    const src = $('#source');
+    src.textContent = dataSource === 'live'
+      ? (fromGh ? 'from GitHub' : 'from status.json')
+      : (fromGh ? 'from GitHub (copy embedded in this page)' : 'from the copy embedded in this page');
+    const ci = data.main_ci;
+    const CI_LABEL = { success: 'green', failure: 'failing', pending: 'running' };
+    if (ci && CI_LABEL[ci.state]) {
+      src.append(document.createTextNode(' · main CI '), link(CI_LABEL[ci.state], ci.url));
+    }
     if (selected) select(selected, { from: 'refresh' });
   }
 
