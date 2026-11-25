@@ -188,6 +188,8 @@ fn download_dir(app: &tauri::App) -> anyhow::Result<PathBuf> {
     Ok(app.path().download_dir()?.join("Pigeon"))
 }
 
+// Tray only (Windows / macOS); Linux is window-only.
+#[cfg(not(target_os = "linux"))]
 fn show_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -196,6 +198,8 @@ fn show_window(app: &tauri::AppHandle) {
     }
 }
 
+// Tray only (Windows / macOS); Linux is window-only.
+#[cfg(not(target_os = "linux"))]
 fn status_line(backend: Option<&Arc<Backend>>) -> String {
     let Some(b) = backend else {
         return "Pigeon · not running".into();
