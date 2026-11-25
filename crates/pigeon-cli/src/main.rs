@@ -244,43 +244,12 @@ fn read_secret(what: &str, file: Option<&Path>, env: &str) -> Result<Zeroizing<S
 }
 
 /// Local file name for a remote PATH when no `-o` is given: its last
-/// component, made safe to create in the current directory on any OS.
-/// `.`/`..` are refused (they would name a directory, or its parent); the
-/// characters Windows forbids (`<>:"|?*`, controls) become `_`, so a Mac name
-/// like `a:b.txt` cannot turn into an NTFS stream or a drive-relative path.
+/// component, made safe to create in the current directory on any OS
+/// (`client::local_file_name`, shared with the app).
 fn default_out(path: &str) -> Result<PathBuf> {
-    let name = path
-        .rsplit(['/', '\\'])
-        .find(|s| !s.is_empty())
-        .filter(|s| *s != "." && *s != "..")
-        .context("cannot derive a file name from PATH; use -o")?;
-    let mut safe: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || "<>:\"|?*".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    // Windows silently drops trailing dots and spaces.
-    while safe.ends_with(['.', ' ']) {
-        safe.pop();
-    }
-    if safe.is_empty() {
-        anyhow::bail!("cannot derive a file name from PATH; use -o");
-    }
-    // Reserved device names (CON, NUL, COM1, ...), with or without extension.
-    let stem = safe.split('.').next().unwrap_or("").to_ascii_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        safe.insert(0, '_');
-    }
-    Ok(PathBuf::from(safe))
+    client::local_file_name(path)
+        .map(PathBuf::from)
+        .map_err(|_| anyhow::anyhow!("cannot derive a file name from PATH; use -o"))
 }
 
 async fn run(

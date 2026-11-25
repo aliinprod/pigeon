@@ -172,6 +172,46 @@ pub fn free_path(out: &Path) -> PathBuf {
         .expect("ran out of u32 file names")
 }
 
+/// Local file name for a remote `path`: its last component, made safe to
+/// create on any OS. The agent never chooses the local directory (SEC-15):
+/// `.`/`..` are refused (they would name a directory, or its parent); the
+/// characters Windows forbids (`<>:"|?*`, controls) become `_`, so a Mac name
+/// like `a:b.txt` cannot turn into an NTFS stream or a drive-relative path;
+/// trailing dots and spaces (which Windows drops) are removed; reserved
+/// device names (`CON`, `NUL`, `COM1`, ...) get a leading `_`.
+pub fn local_file_name(path: &str) -> Result<String> {
+    let name = path
+        .rsplit(['/', '\\'])
+        .find(|s| !s.is_empty())
+        .filter(|s| *s != "." && *s != "..")
+        .context("cannot derive a file name from this path")?;
+    let mut safe: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || "<>:\"|?*".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    while safe.ends_with(['.', ' ']) {
+        safe.pop();
+    }
+    if safe.is_empty() {
+        bail!("cannot derive a file name from this path");
+    }
+    let stem = safe.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        safe.insert(0, '_');
+    }
+    Ok(safe)
+}
+
 /// Like `Path::exists`, but a dangling symlink also counts as taken.
 fn exists(p: &Path) -> bool {
     p.symlink_metadata().is_ok()
@@ -189,6 +229,30 @@ pub async fn get(
     path: &str,
     out: &Path,
 ) -> Result<GetStats> {
+    get_with_progress(endpoint, agent, path, out, &|_| {}).await
+}
+
+/// How far a download is, reported by [`get_with_progress`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    /// Whole file size, as announced by the agent.
+    pub size: u64,
+    /// Bytes of the file that are on disk now (resumed bytes included).
+    pub done: u64,
+    /// Bytes resumed from an existing `.part` file.
+    pub resumed_from: u64,
+}
+
+/// Like [`get`], and calls `progress` once the agent's header arrived and
+/// after every chunk written to disk. `progress` runs on the download task:
+/// keep it short (update a counter, not the UI).
+pub async fn get_with_progress(
+    endpoint: &Endpoint,
+    agent: &EndpointAddr,
+    path: &str,
+    out: &Path,
+    progress: &(dyn Fn(Progress) + Send + Sync),
+) -> Result<GetStats> {
     let part = part_path(out);
     let offset = match tokio::fs::metadata(&part).await {
         Ok(m) => m.len(),
@@ -201,7 +265,7 @@ pub async fn get(
         offset,
     };
     let (conn, _send, mut recv) = request(endpoint, agent, &req).await?;
-    let result = receive(&mut recv, &part, offset)
+    let result = receive(&mut recv, &part, offset, progress)
         .await
         .map_err(|e| explain(&conn, e));
     let route = route(&conn);
@@ -241,6 +305,7 @@ async fn receive(
     recv: &mut RecvStream,
     part: &Path,
     offset: u64,
+    progress: &(dyn Fn(Progress) + Send + Sync),
 ) -> Result<(u64, u64, Option<[u8; 32]>)> {
     let (size, offset, sha256) = match read_frame(recv).await? {
         Response::File {
@@ -278,6 +343,14 @@ async fn receive(
     let expected = size - offset;
     let mut buf = vec![0u8; 256 * 1024];
     let mut got = 0u64;
+    let report = |got: u64| {
+        progress(Progress {
+            size,
+            done: offset + got,
+            resumed_from: offset,
+        })
+    };
+    report(0);
     // `RecvStream::read` returns `None` once the agent finished the stream.
     while let Some(n) = recv.read(&mut buf).await? {
         got += n as u64;
@@ -285,6 +358,7 @@ async fn receive(
             bail!("agent sent more data than announced");
         }
         file.write_all(&buf[..n]).await?;
+        report(got);
     }
     file.flush().await?;
     file.sync_all().await?;
@@ -324,6 +398,22 @@ mod tests {
         let dot = dir.path().join(".env");
         std::fs::write(&dot, b"").unwrap();
         assert_eq!(free_path(&dot), dir.path().join(".env (1)"));
+    }
+
+    #[test]
+    fn local_file_name_is_safe_on_every_os() {
+        assert_eq!(local_file_name("Reports/q4.pdf").unwrap(), "q4.pdf");
+        assert_eq!(local_file_name("a\\b\\c.txt").unwrap(), "c.txt");
+        assert_eq!(local_file_name("dir/").unwrap(), "dir");
+        assert_eq!(local_file_name("a:b.txt").unwrap(), "a_b.txt");
+        assert_eq!(local_file_name("x\u{1b}y?.txt").unwrap(), "x_y_.txt");
+        assert_eq!(local_file_name("name. .").unwrap(), "name");
+        assert_eq!(local_file_name("CON.txt").unwrap(), "_CON.txt");
+        assert_eq!(local_file_name("com1").unwrap(), "_com1");
+        assert_eq!(local_file_name("COM10").unwrap(), "COM10");
+        for bad in ["", "/", "..", "a/..", ".", "...", "  "] {
+            assert!(local_file_name(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

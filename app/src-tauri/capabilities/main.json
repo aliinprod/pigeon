@@ -1,0 +1,25 @@
+{
+  "identifier": "main",
+  "description": "The Pigeon window may call the app's own commands and nothing else: no shell, no file system, no plugin commands (the folder picker and Open / Show in folder run in Rust).",
+  "windows": ["main"],
+  "permissions": [
+    "allow-status",
+    "allow-wordlist",
+    "allow-add-folder",
+    "allow-remove-folder",
+    "allow-create-invite",
+    "allow-cancel-invite",
+    "allow-dismiss-invite",
+    "allow-revoke-device",
+    "allow-check-link",
+    "allow-pair-with",
+    "allow-list-dir",
+    "allow-get-file",
+    "allow-resume-transfer",
+    "allow-clear-finished",
+    "allow-open-file",
+    "allow-show-in-folder",
+    "allow-forget-computer",
+    "allow-rename-computer"
+  ]
+}
