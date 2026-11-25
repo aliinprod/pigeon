@@ -51,6 +51,14 @@ pub const MAX_NAME_INPUT: usize = identity::MAX_NAME * 4;
 /// How long a listing may take before the computer counts as offline.
 const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Shown when something else already shares for this computer (another
+/// Pigeon app with the same settings, or `pigeon-agent share`). A second
+/// launch of the app itself never gets here: it focuses the first window
+/// (single instance, `main.rs`).
+pub const ALREADY_SHARING: &str = "Pigeon is already running on this computer: either the \
+     Pigeon app, or `pigeon-agent share` in a terminal. Only one of them can share at a time. \
+     Quit the other one, then open Pigeon again.";
+
 /// How the backend starts.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -185,7 +193,13 @@ pub struct TransferView {
     pub resumed_from: u64,
     pub mb_per_sec: f64,
     pub route: Option<String>,
+    /// SHA-256 of the local copy (always computed after a get).
     pub sha256: Option<String>,
+    /// Whether that hash was checked against the one the other computer
+    /// sent (W-19): `Some(true)` checked and equal, `Some(false)` nothing
+    /// to check against, `None` not known. The UI says "SHA-256 verified"
+    /// only for `Some(true)`.
+    pub verified: Option<bool>,
     pub error: Option<String>,
     pub started_at: u64,
     pub finished_at: Option<u64>,
@@ -295,10 +309,9 @@ pub enum PairOutcome {
     },
     UsedUp,
     Expired,
-    /// No active invite there (used, replaced) or the computer is not running Pigeon.
-    Gone {
-        message: String,
-    },
+    /// Not expired, but no active invite there: it paired a device already
+    /// (or was cancelled or replaced, or Pigeon is not running there).
+    AlreadyUsed,
     Failed {
         message: String,
     },
@@ -400,8 +413,9 @@ fn device_view(d: &Device) -> DeviceView {
     }
 }
 
-/// Maps a core pairing error onto what the UI shows.
-fn classify_pair_error(err: &anyhow::Error) -> PairOutcome {
+/// Maps a core pairing error onto what the UI shows. `link_expired`: the
+/// pasted link's own expiry time has passed.
+fn classify_pair_error(err: &anyhow::Error, link_expired: bool) -> PairOutcome {
     let msg = format!("{err:#}");
     if let Some(rest) = msg.split("attempts left: ").nth(1) {
         let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -412,19 +426,66 @@ fn classify_pair_error(err: &anyhow::Error) -> PairOutcome {
     if msg.contains("used up") {
         return PairOutcome::UsedUp;
     }
+    // Checked before "expired": the core's texts for these say "it expired,
+    // was used, or was replaced" (no active invite there, or no pairing at
+    // all once the invite ended). The link knows whether it expired, so
+    // anything else means it was used, cancelled or replaced (N2).
+    if msg.contains("no active invite") || msg.contains("could not pair") {
+        return if link_expired {
+            PairOutcome::Expired
+        } else {
+            PairOutcome::AlreadyUsed
+        };
+    }
     if msg.contains("expired") {
         return PairOutcome::Expired;
     }
-    if msg.contains("could not pair") || msg.contains("no active invite") {
-        return PairOutcome::Gone {
-            message: "No active invite there. It was already used or replaced, or Pigeon is \
-                      not running on that computer."
-                .into(),
-        };
-    }
     PairOutcome::Failed {
-        message: pigeon_core::display_safe(&msg),
+        message: friendly_error(&msg, None),
     }
+}
+
+/// Turns a core error into what a person reads in the app: no CLI commands,
+/// no OS error text, no `\\?\` paths, no `agent:` prefix (N3). `computer` is
+/// the other computer's name when there is one.
+pub fn friendly_error(msg: &str, computer: Option<&str>) -> String {
+    let them = computer.unwrap_or("That computer");
+    if msg.contains("not paired (or was revoked)") {
+        return format!(
+            "{them} no longer lets this computer get files. To get files again, make a new \
+             invite on {them} (Pair a device) and pair again."
+        );
+    }
+    if msg.contains("is busy (too many connections)") {
+        return format!("{them} is busy right now. Try again in a moment.");
+    }
+    if msg.contains("could not connect to the agent") {
+        return format!("Couldn't connect to {them}.");
+    }
+    let mut msg = msg.trim();
+    msg = msg.strip_prefix("agent: ").unwrap_or(msg);
+    let mut out = msg.to_string();
+    // "not found: a/b: The system cannot find the file specified. (os error 2)"
+    if let Some(at) = out.find(" (os error ") {
+        out.truncate(at);
+        if let Some(colon) = out.rfind(": ") {
+            out.truncate(colon);
+        }
+    }
+    if let Some(path) = out.strip_prefix("not found: ") {
+        out = format!("Not found: {path}. It may have been moved, renamed or unshared.");
+    } else if out == "the shared folder is not available" {
+        out = format!(
+            "{them} can't open that shared folder right now (it may be on a disk that is not connected)."
+        );
+    }
+    let out = out.replace(r"\\?\", "");
+    let mut chars = out.chars();
+    let out = match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => out,
+    };
+    pigeon_core::display_safe(&out)
 }
 
 fn load_folders(dir: &Path) -> Result<Vec<FolderEntry>> {
@@ -434,6 +495,18 @@ fn load_folders(dir: &Path) -> Result<Vec<FolderEntry>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e).context(format!("could not read {SHARES_FILE}")),
     }
+}
+
+/// Whether the core checked the local copy's SHA-256 against the one the
+/// other computer sent (W-19).
+///
+/// TODO(core-file-safety): today `client::GetStats` does not say. The core
+/// skips the check when the agent sends no hash (R7), and `GetStats::sha256`
+/// is the local hash either way, so the app cannot tell a checked copy from
+/// an unchecked one: report "not known" and never claim "verified". Use the
+/// flag from Anvil's `core-file-safety` change once it lands.
+fn sha256_verified(_stats: &client::GetStats) -> Option<bool> {
+    None
 }
 
 fn shared(folders: &[FolderEntry]) -> Vec<SharedFolder> {
@@ -456,10 +529,17 @@ impl Backend {
             download_dir,
             local_only,
         } = opts;
-        let share_lock = agent::hold_share_lock(&home.dir).context(
-            "Pigeon is already sharing on this computer (another Pigeon app, or \
-             `pigeon-agent share`). Quit it first",
-        )?;
+        let share_lock = match agent::hold_share_lock(&home.dir) {
+            Ok(lock) => lock,
+            // Busy: say who, without the lock file's path (M2).
+            Err(_) if agent::share_running(&home.dir) => bail!(ALREADY_SHARING),
+            Err(e) => {
+                return Err(e).context(format!(
+                    "Pigeon could not open its settings folder {}",
+                    display_path(&home.dir)
+                ));
+            }
+        };
         let (me, _store): (Identity, _) = home.identity()?;
         let key = me.key.clone();
         let builder = if local_only {
@@ -624,9 +704,17 @@ impl Backend {
             .with_context(|| format!("folder not found: {}", path.display()))?;
         anyhow::ensure!(path.is_dir(), "not a folder: {}", display_path(&path));
         let config = self.home.dir.canonicalize()?;
+        // Sharing these would hand out the allow-lists (N1: say which).
         anyhow::ensure!(
-            !config.starts_with(&path) && !path.starts_with(&config),
-            "this folder holds Pigeon's own settings; pick another one"
+            !path.starts_with(&config),
+            "This folder is part of Pigeon's own settings, so it can't be shared. \
+             Choose another folder."
+        );
+        anyhow::ensure!(
+            !config.starts_with(&path),
+            "This folder contains Pigeon's own settings ({}), so it can't be shared. \
+             Choose a subfolder instead.",
+            display_path(&config)
         );
         let mut folders = self.folders.lock().expect("folders poisoned");
         anyhow::ensure!(
@@ -838,7 +926,10 @@ impl Backend {
         };
         let paired = match pair::pair(&self.endpoint, &link, &code).await {
             Ok(p) => p,
-            Err(e) => return Ok(classify_pair_error(&e)),
+            Err(e) => {
+                let expired = pair::now_secs() >= link.expires_at;
+                return Ok(classify_pair_error(&e, expired));
+            }
         };
         let fp = fingerprint(&paired.agent);
         let agent = PairedAgent {
@@ -919,15 +1010,23 @@ impl Backend {
                     "no answer in time; it may be asleep or offline"
                 ))
             });
-        let reached = match &result {
-            Ok(_) => true,
-            // The agent answered with an error: it is online.
-            Err(e) => format!("{e:#}").starts_with("agent:"),
+        let raw_error = result.as_ref().err().map(|e| format!("{e:#}"));
+        let reached = match &raw_error {
+            None => true,
+            // The agent answered with an error, or refused this device (it
+            // was revoked): either way it is online.
+            Some(e) => e.starts_with("agent:") || e.contains("not paired (or was revoked)"),
         };
         self.online
             .lock()
             .expect("online poisoned")
             .insert(agent.id, reached);
+        if let Some(e) = raw_error {
+            bail!(friendly_error(
+                &e,
+                Some(&pigeon_core::display_safe(&agent.name))
+            ));
+        }
         let prefix = path.trim_matches('/');
         Ok(result?
             .into_iter()
@@ -986,6 +1085,7 @@ impl Backend {
                 mb_per_sec: 0.0,
                 route: None,
                 sha256: None,
+                verified: None,
                 error: None,
                 started_at: pair::now_secs(),
                 finished_at: None,
@@ -1004,6 +1104,11 @@ impl Backend {
     pub fn resume(self: &Arc<Self>, id: u64) -> Result<()> {
         let path = {
             let mut transfers = self.transfers.lock().expect("transfers poisoned");
+            let busy = transfers.iter().any(|o| {
+                o.view.id != id
+                    && o.view.state == TransferState::Active
+                    && transfers.iter().any(|t| t.view.id == id && t.out == o.out)
+            });
             let t = transfers
                 .iter_mut()
                 .find(|t| t.view.id == id)
@@ -1013,12 +1118,18 @@ impl Backend {
                 "not a failed transfer"
             );
             anyhow::ensure!(
+                !busy,
+                "{} is downloading again; wait for it to finish",
+                t.view.file_name
+            );
+            anyhow::ensure!(
                 t.out.symlink_metadata().is_err(),
                 "{} exists now; get it again instead",
                 t.view.file_name
             );
             t.view.state = TransferState::Active;
             t.view.error = None;
+            t.view.verified = None;
             t.view.finished_at = None;
             t.started = Instant::now();
             t.path.clone()
@@ -1044,11 +1155,15 @@ impl Backend {
                     t.view.resumed_from = stats.resumed_from;
                     t.view.mb_per_sec = stats.mb_per_sec();
                     t.view.route = Some(stats.route.to_string());
+                    t.view.verified = sha256_verified(&stats);
                     t.view.sha256 = Some(stats.sha256);
                 }
                 Err(e) => {
                     t.view.state = TransferState::Failed;
-                    t.view.error = Some(pigeon_core::display_safe(&format!("{e:#}")));
+                    t.view.error = Some(friendly_error(
+                        &format!("{e:#}"),
+                        Some(&t.view.computer_name),
+                    ));
                 }
             }
         });
@@ -1145,7 +1260,7 @@ mod tests {
 
     #[test]
     fn pair_errors_map_to_ui_states() {
-        let e = |s: &str| classify_pair_error(&anyhow::anyhow!("{s}"));
+        let e = |s: &str| classify_pair_error(&anyhow::anyhow!("{s}"), false);
         assert!(matches!(
             e("wrong pairing code; attempts left: 2"),
             PairOutcome::WrongCode { attempts_left: 2 }
@@ -1158,14 +1273,55 @@ mod tests {
             e("the agent refused: this invite has expired"),
             PairOutcome::Expired
         ));
-        assert!(matches!(
-            e("the agent refused: no active invite: it expired, was used, or was replaced"),
-            PairOutcome::Expired | PairOutcome::Gone { .. }
-        ));
-        assert!(matches!(
-            e("could not pair: either ..."),
-            PairOutcome::Gone { .. }
-        ));
+        // N2: a link that has not expired but finds no invite was used
+        // (or cancelled / replaced), whatever the core's text says.
+        let no_invite =
+            "the agent refused: no active invite: it expired, was used, or was replaced";
+        let no_alpn = "could not pair: either `pigeon-agent share` is not running, or this invite \
+                       expired, was already used, or was replaced. Make a new one with `pigeon-agent pair`";
+        for msg in [no_invite, no_alpn] {
+            assert!(matches!(e(msg), PairOutcome::AlreadyUsed), "{msg}");
+            assert!(matches!(
+                classify_pair_error(&anyhow::anyhow!("{msg}"), true),
+                PairOutcome::Expired
+            ));
+        }
+        // Anything else never carries CLI text into the app.
+        match e("pairing step timed out") {
+            PairOutcome::Failed { message } => assert_eq!(message, "Pairing step timed out"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// N3: what the Browse banner and Transfers show.
+    #[test]
+    fn core_errors_read_like_the_app() {
+        let f = |s: &str| friendly_error(s, Some("Work Mac"));
+        let revoked = f(
+            "the agent refused this device: it is not paired (or was revoked). \
+                         Run `pigeon-agent pair` on the agent and `pigeon pair <LINK>` here",
+        );
+        assert!(revoked.starts_with("Work Mac no longer lets this computer get files"));
+        let os =
+            f("agent: not found: nope: The system cannot find the file specified. (os error 2)");
+        assert_eq!(
+            os,
+            "Not found: nope. It may have been moved, renamed or unshared."
+        );
+        assert_eq!(
+            f("agent: `..` is not allowed: a/.."),
+            "`..` is not allowed: a/.."
+        );
+        assert!(f("could not move \\\\?\\C:\\x.part").contains("C:\\x.part"));
+        for msg in [
+            revoked,
+            os,
+            f("agent: the agent is busy (too many connections); try again"),
+        ] {
+            for bad in ["pigeon-agent", "pigeon pair", "os error", "agent:", r"\\?\"] {
+                assert!(!msg.contains(bad), "{bad} in {msg}");
+            }
+        }
     }
 
     #[test]

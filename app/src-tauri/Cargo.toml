@@ -35,6 +35,11 @@ zeroize = "=1.9.2"
 tauri = { version = "=2.12.5", features = ["image-png"] }
 tauri-plugin-dialog = "=2.8.4"
 tauri-plugin-opener = "=2.7.2"
+# Launching Pigeon again focuses the running window (M2, W-22). No JS API
+# and no permission: it only calls our Rust callback. Windows: a named mutex
+# and a message-only window; macOS: a Unix socket in /tmp (local IPC, not a
+# network port); Linux: a D-Bus name.
+tauri-plugin-single-instance = "=2.5.5"
 
 # Tray / menu bar icon on Windows and macOS only. Linux is window-only for
 # now (stock GNOME has no tray), so it needs no appindicator library.

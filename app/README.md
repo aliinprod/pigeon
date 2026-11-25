@@ -41,6 +41,15 @@ $env:PIGEON_HOME="C:\tmp\office\home"; $env:PIGEON_DOWNLOAD_DIR="C:\tmp\office\d
 $env:WEBVIEW2_USER_DATA_FOLDER="C:\tmp\office\webview"; .\target\debug\pigeon-app.exe
 ```
 
+With the normal config dir (no `$PIGEON_HOME`) Pigeon is single instance
+(`tauri-plugin-single-instance`): launching it again shows the running window.
+With `$PIGEON_HOME` set, each instance has its own settings and `share.lock`
+keeps two instances on the same settings apart. If `pigeon-agent share` holds
+`share.lock`, the app says so in words and quits when its window is closed.
+
+`$PIGEON_DOWNLOAD_DIR` may point at an existing folder, but Pigeon makes it
+owner-only (its ACL / mode is replaced), like `Downloads/Pigeon` (SEC-14).
+
 Linux needs `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev` to build.
 
 ## Why plain JS
@@ -107,3 +116,9 @@ s-invite(-wrong), s-paired, g-link, g-code(-wrong), g-paired, g-browse(-root),
 g-transfers(-progress), devices (get side, and both ways), revoke, settings;
 plus `win-window-native-dark.png` (real window frame) and
 `win-tray-menu-dark.png` (real tray menu).
+
+`screenshots/win-fix-*` (app fixes 1, light + dark): the changed messages
+(already-running, already-used invite, revoked Browse banner, sharing the
+folder that holds Pigeon's settings, the "SHA-256 of this copy" label). These
+are `app/ui` rendered in headless Edge with a stub in place of Tauri IPC; the
+message texts are the backend's (`ALREADY_SHARING`, `friendly_error`).
