@@ -281,7 +281,7 @@
     const C = {
       used_up: ['x', 'This invite is used up', '3 wrong codes were typed, so it stopped working. Make a new invite on the other computer and type the code exactly as shown.'],
       expired: ['clock', 'This invite expired', 'Invites last 12 hours. On the other computer, click Pair a device to make a new one.'],
-      gone: ['alert', 'This invite can’t be used', 'It was already used or replaced, or Pigeon is not running on that computer. If you didn’t pair with it, someone else may have: check Devices on that computer.']
+      already_used: ['alert', 'This invite was already used', 'Each invite pairs one device, once. If you didn’t pair with it, someone else may have: check Devices on that computer. It may also have been cancelled or replaced, or Pigeon isn’t running there. Make a new invite on that computer.']
     }[kind] || ['alert', 'Pairing failed', ''];
     return getShell(`<div class="big-check ${kind !== 'expired' ? 'big-x' : ''} mt12">${ic(/** @type {any} */ (C[0]), 'lg')}</div>
       <h1 class="h1">${C[1]}</h1><p class="muted lead">${C[2]}</p>
@@ -319,13 +319,21 @@
     ).html + `<div class="m-status">${ic('shield')}<span>Read-only. Files stay on ${esc(name)}.</span><span class="grow"></span><span class="path-line">Saving to <span class="mono" title="${esc(S.download_dir)}">${esc(S.download_dir)}</span></span></div>`;
   }
 
+  // W-19: "verified" only when the backend says the copy's hash was checked
+  // against the one the other computer sent.
+  function verifiedBadge(/** @type {any} */ x) {
+    if (x.verified === true) return `<span class="verified" title="SHA-256 ${esc(x.sha256)}">${ic('check')}SHA-256 verified</span>`;
+    if (x.verified === false) return `<span class="attn-text" title="SHA-256 of this copy: ${esc(x.sha256)}">Not verified: ${esc(x.computer_name)} sent no checksum</span>`;
+    return `<span title="SHA-256 of this copy: ${esc(x.sha256)}">SHA-256 of this copy</span>`;
+  }
+
   function xferRow(/** @type {any} */ x) {
     const route = x.route === 'relay' ? '<span class="route relay" title="Encrypted end to end; the relay can’t read it. Slower, not less safe.">Relay · slower</span>' : x.route === 'direct' ? '<span class="route">Direct</span>' : '';
     if (x.state === 'done') {
       return `<div class="xfer"><div class="fico">${ic('file')}</div>
         <div class="row wrap"><span class="h3 trunc">${esc(x.file_name)}</span><span class="small muted mono">${size(x.size)}</span></div>
         <div class="acts">${B('Open', { k: 'sm', i: 'open', act: 'open-file', data: { id: x.id } })}${B('Show in folder', { k: 'sm', i: 'folder', act: 'show-file', data: { id: x.id } })}</div>
-        <div class="meta"><span class="verified" title="SHA-256 ${esc(x.sha256)}">${ic('check')}SHA-256 verified</span>${route}<span>from ${esc(x.computer_name)}</span><span>Done ${esc(when(x.finished_at))}</span>${x.resumed_from ? `<span>resumed at ${size(x.resumed_from)}</span>` : ''}
+        <div class="meta">${verifiedBadge(x)}${route}<span>from ${esc(x.computer_name)}</span><span>Done ${esc(when(x.finished_at))}</span>${x.resumed_from ? `<span>resumed at ${size(x.resumed_from)}</span>` : ''}
           ${x.file_name !== x.wanted_name ? `<span>Saved as a new copy: <span class="mono">${esc(x.wanted_name)}</span> already existed</span>` : ''}<span class="mono sha">${esc(String(x.sha256).slice(0, 16))}…</span></div></div>`;
     }
     if (x.state === 'failed') {

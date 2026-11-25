@@ -39,7 +39,33 @@ fn be(state: &State<'_, AppState>) -> Res<Arc<Backend>> {
 }
 
 fn err(e: anyhow::Error) -> String {
-    pigeon_core::display_safe(&format!("{e:#}"))
+    pigeon_core::display_safe(&format!("{e:#}").replace(r"\\?\", ""))
+}
+
+/// Single instance (M2, W-22) for the normal config dir. With
+/// `$PIGEON_HOME` set (tests, or two instances on one PC, see README) each
+/// instance has its own settings and `share.lock` keeps them apart.
+fn single_instance() -> bool {
+    std::env::var_os(pigeon_core::config::HOME_ENV).is_none_or(|h| h.is_empty())
+}
+
+/// Brings the window back (from the tray, minimized or behind others).
+fn show_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// The backend did not start: there is nothing to keep running in the tray.
+#[cfg(not(target_os = "linux"))]
+fn failed(app: &tauri::AppHandle) -> bool {
+    app.state::<AppState>()
+        .backend
+        .lock()
+        .expect("state poisoned")
+        .is_none()
 }
 
 #[tauri::command]
@@ -190,16 +216,6 @@ fn download_dir(app: &tauri::App) -> anyhow::Result<PathBuf> {
 
 // Tray only (Windows / macOS); Linux is window-only.
 #[cfg(not(target_os = "linux"))]
-fn show_window(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
-}
-
-// Tray only (Windows / macOS); Linux is window-only.
-#[cfg(not(target_os = "linux"))]
 fn status_line(backend: Option<&Arc<Backend>>) -> String {
     let Some(b) = backend else {
         return "Pigeon · not running".into();
@@ -278,7 +294,16 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn main() {
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if single_instance() {
+        // Registered first, so a second launch exits before it opens a
+        // window or touches the config dir. The callback only shows the
+        // running window; the second launch's arguments and cwd are ignored.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_window(app)
+        }));
+    }
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
@@ -299,14 +324,19 @@ fn main() {
                     *state.error.lock().expect("state poisoned") = Some(err(e));
                 }
             }
+            // No tray icon when nothing runs: closing the error window quits.
             #[cfg(not(target_os = "linux"))]
-            tray(app)?;
+            if !failed(app.handle()) {
+                tray(app)?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
             // With a tray / menu bar icon, closing the window keeps sharing.
             #[cfg(not(target_os = "linux"))]
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && !failed(window.app_handle())
+            {
                 api.prevent_close();
                 let _ = window.hide();
             }
