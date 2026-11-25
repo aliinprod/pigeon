@@ -1,0 +1,110 @@
+# cargo-deny policy for the desktop app (owned by Warden). The app is its own
+# workspace (own Cargo.lock), so it gets its own policy: the root deny.toml
+# stays as strict as before for core / agent / CLI.
+# Run: cd app/src-tauri && cargo deny --locked check
+# CI: .github/workflows/security.yml job `cargo-deny-app`.
+#
+# Same rules as the root policy. The only differences are listed below, each
+# with the crate, why it is acceptable, and a review date (W-24, PR #19).
+
+[graph]
+# Every platform the app builds on. Linux is built in CI but not shipped yet;
+# keeping it here means its advisories stay visible instead of disappearing.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+ignore = [
+    # Same as the root policy (pigeon-core pulls them in here too).
+    # Review: 2026-12-31.
+    { id = "RUSTSEC-2026-0574", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0575", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0576", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0577", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0578", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0579", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0580", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0581", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0582", reason = "heapless 0.7 via postcard; affected API unused" },
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained only; transitive via iroh/netwatch" },
+
+    # Linux only (x86_64-unknown-linux-gnu). None of these crates is in the
+    # Windows or macOS graph (`cargo tree --target ... -i <crate>` is empty),
+    # and the Linux app is not shipped. Review: 2027-02-28, or before the
+    # first Linux release, whichever is first.
+    #
+    # proc-macro-error 1.0.4: unmaintained, build-time proc macro only, via
+    # gtk 0.18 (Tauri's Linux window stack). No runtime code.
+    { id = "RUSTSEC-2024-0370", reason = "Linux only; build-time proc macro via gtk 0.18 (Tauri); no upgrade upstream" },
+    # glib 0.18.5: VariantStrIter iterators are unsound. Pigeon never touches
+    # GVariant; it is reached only through gtk/webkit2gtk 0.18, pinned by
+    # Tauri 2. Fixed in glib 0.20, which Tauri's Linux stack cannot use yet.
+    { id = "RUSTSEC-2024-0429", reason = "Linux only; glib 0.18 via Tauri's gtk stack; VariantStrIter unused" },
+    # zvariant / zbus_names / zvariant_derive 5.x: unmaintained as standalone
+    # crates (merged into zbus 6), not vulnerable. Via zbus 5 in
+    # tauri-plugin-opener (D-Bus "show in folder" on Linux).
+    { id = "RUSTSEC-2026-0370", reason = "Linux only; unmaintained (merged into zbus 6); via tauri-plugin-opener" },
+    { id = "RUSTSEC-2026-0371", reason = "Linux only; unmaintained (merged into zbus 6); via tauri-plugin-opener" },
+    { id = "RUSTSEC-2026-0372", reason = "Linux only; unmaintained (merged into zbus 6); via tauri-plugin-opener" },
+]
+
+[licenses]
+version = 2
+# Same permissive list as the root policy. MPL-2.0 is NOT allowed in general:
+# only for the crates named under `exceptions`.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+# MPL-2.0 is file-level copyleft: using these crates unmodified as
+# dependencies of an MIT OR Apache-2.0 app is allowed; the obligation is to
+# keep their notices and point to their (unmodified, crates.io) source when
+# we distribute binaries. Add that to the release third-party notices (R5 /
+# SEC-27 work). Never vendor or patch these files without changing this note.
+# All are pulled in by Tauri itself (tauri-utils -> dom_query / kuchikiki for
+# HTML/CSP handling; tauri -> dirs -> dirs-sys -> option-ext).
+# Review: 2027-02-28.
+exceptions = [
+    { crate = "cssparser", allow = ["MPL-2.0"] },
+    { crate = "cssparser-macros", allow = ["MPL-2.0"] },
+    { crate = "selectors", allow = ["MPL-2.0"] },
+    { crate = "dtoa-short", allow = ["MPL-2.0"] },
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    { crate = "openssl", reason = "rustls only" },
+    { crate = "openssl-sys", reason = "rustls only" },
+    { crate = "native-tls", reason = "rustls only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

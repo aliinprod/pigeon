@@ -48,6 +48,36 @@ jobs:
       - name: cargo deny check
         run: cargo deny --locked check
 
+  # The desktop app is its own workspace with its own Cargo.lock and its own
+  # policy (app/src-tauri/deny.toml: MPL-2.0 only for named Tauri deps, and
+  # Linux-only GTK/zbus advisories ignored with reasons and review dates).
+  # cargo-deny reads metadata only, so no GUI libraries are needed here.
+  cargo-deny-app:
+    name: cargo deny, desktop app (advisories, licenses, bans, sources)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch, 2026-11-15
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: cargo-deny-${{ env.CARGO_DENY_VERSION }}
+      - name: install cargo-deny
+        run: |
+          if ! cargo deny --version 2>/dev/null | grep -q "$CARGO_DENY_VERSION"; then
+            cargo install --locked "cargo-deny@$CARGO_DENY_VERSION"
+          fi
+          cargo deny --version
+      - name: cargo deny check (app/src-tauri/deny.toml)
+        run: cargo deny --locked check
+
   gitleaks:
     name: secret scan (gitleaks)
     runs-on: ubuntu-latest
