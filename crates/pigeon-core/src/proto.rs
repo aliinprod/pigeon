@@ -40,6 +40,10 @@ pub enum Response {
     List(Vec<Entry>),
     /// Header for a file download. `size` is the whole file size; the bytes that
     /// follow are `size - offset` long. `sha256` covers the whole file.
+    /// It stays an `Option` on the wire so the frame encoding does not change
+    /// (old and new builds still understand each other), but it is required:
+    /// every pigeon-agent since Day 1 sends `Some`, and the client refuses a
+    /// header with `None` before reading any byte (W-19).
     /// `offset` is the requested offset, or 0 when the requested offset was
     /// past the end of the file (the client must then restart from scratch).
     File {

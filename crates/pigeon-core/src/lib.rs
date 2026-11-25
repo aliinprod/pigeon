@@ -9,6 +9,7 @@ pub mod agent;
 pub mod client;
 pub mod config;
 pub mod devices;
+pub mod download;
 pub mod guard;
 pub mod identity;
 pub mod keystore;
@@ -48,15 +49,11 @@ pub fn display_safe(s: &str) -> String {
         // ZWNJ / ZWJ (U+200C, U+200D) are deliberately kept: they are part of
         // normal Persian / Indic words and emoji sequences, and escaping them
         // would make listed names impossible to copy back into `get`.
-        let bidi_or_invisible = matches!(
-            c,
-            '\u{061C}'
-                | '\u{200B}'
-                | '\u{200E}'..='\u{200F}'
-                | '\u{202A}'..='\u{202E}'
-                | '\u{2066}'..='\u{2069}'
-                | '\u{FEFF}'
-        );
+        // Every other Unicode format (Cf) character is escaped: bidi
+        // overrides / isolates / marks, zero-width spaces, BOM, tags. So are
+        // the line and paragraph separators, which break a line in a UI.
+        let bidi_or_invisible = (download::is_format_char(c) && !download::is_joiner(c))
+            || matches!(c, '\u{2028}' | '\u{2029}');
         if c.is_control() || bidi_or_invisible {
             out.push_str(&format!("\\u{{{:x}}}", c as u32));
         } else {
@@ -81,6 +78,11 @@ mod tests {
         // A right-to-left override can make `x<RLO>fdp.exe` look like `xexe.pdf`.
         assert_eq!(display_safe("x\u{202E}fdp.exe"), r"x\u{202e}fdp.exe");
         assert_eq!(display_safe("a\u{061C}b"), r"a\u{61c}b");
+        // W-17: the rest of Unicode Cf and the line separators, too.
+        assert_eq!(display_safe("a\u{2067}b\u{2069}"), r"a\u{2067}b\u{2069}");
+        assert_eq!(display_safe("a\u{2060}\u{00AD}b"), r"a\u{2060}\u{ad}b");
+        assert_eq!(display_safe("a\u{2028}b\u{2029}"), r"a\u{2028}b\u{2029}");
+        assert_eq!(display_safe("t\u{E0041}"), r"t\u{e0041}");
     }
 
     #[test]

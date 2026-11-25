@@ -45,6 +45,7 @@ async fn transfer_100mb_and_hash_matches() {
     assert_eq!(stats.size, size as u64);
     assert_eq!(expected, actual);
     assert_eq!(stats.sha256, expected);
+    assert_eq!(stats.path, out);
     // Loopback with relays disabled: the only possible path is direct.
     assert_eq!(stats.route, client::Route::Direct);
     assert!(!client::part_path(&out).exists());
@@ -477,4 +478,167 @@ async fn named_folders_over_the_wire() {
             .is_err()
     );
     shutdown(s).await;
+}
+
+// ---- W-17..W-19: safer downloaded files ----
+
+/// W-18: a file that appears at OUT while the download runs is never
+/// replaced; the download lands at `name (1).ext` and says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn file_appearing_during_download_is_never_replaced() {
+    let s = setup().await;
+    let size = 2 * 1024 * 1024 + 5;
+    write_random_file(&s.root.join("race.bin"), size);
+    let data = std::fs::read(s.root.join("race.bin")).unwrap();
+    let out = s.work.join("race.bin");
+    let once = std::sync::Once::new();
+    let stats = within(client::get_with_progress(
+        &s.client,
+        &s.addr,
+        "race.bin",
+        &out,
+        &|_| once.call_once(|| std::fs::write(&out, b"precious").unwrap()),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"precious");
+    assert_eq!(stats.path, s.work.join("race (1).bin"));
+    assert_eq!(std::fs::read(&stats.path).unwrap(), data);
+    assert!(!client::part_path(&out).exists());
+    shutdown(s).await;
+}
+
+/// W-18: two downloads never write one `.part`. While one holds it, a second
+/// fails before touching it; a fresh download refuses an existing `.part`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_part_in_use_is_never_shared() {
+    let s = setup().await;
+    std::fs::write(s.root.join("a.txt"), b"hello").unwrap();
+    let out = s.work.join("a.txt");
+    let part = client::part_path(&out);
+    std::fs::write(&part, b"he").unwrap();
+
+    // Another download (simulated) holds the lock on the `.part`.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&part)
+        .unwrap();
+    held.try_lock().unwrap();
+    assert!(client::part_in_use(&out));
+    let err = within(client::get(&s.client, &s.addr, "a.txt", &out))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("another download"), "{err:#}");
+    drop(held);
+    assert_eq!(std::fs::read(&part).unwrap(), b"he");
+    assert!(!out.exists());
+
+    // Fresh mode refuses to start over an existing `.part`.
+    let err = within(client::get_with_mode(
+        &s.client,
+        &s.addr,
+        "a.txt",
+        &out,
+        client::Mode::Fresh,
+        &|_| {},
+    ))
+    .await
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("already exists"), "{err:#}");
+    assert_eq!(std::fs::read(&part).unwrap(), b"he");
+
+    // The CLI's choice: resume it now that nobody holds it.
+    let (to, mode) = client::choose_out(&out);
+    assert_eq!((to.as_path(), mode), (out.as_path(), client::Mode::Resume));
+    let stats = within(client::get_with_mode(
+        &s.client,
+        &s.addr,
+        "a.txt",
+        &to,
+        mode,
+        &|_| {},
+    ))
+    .await
+    .unwrap();
+    assert_eq!(stats.resumed_from, 2);
+    assert_eq!(std::fs::read(&out).unwrap(), b"hello");
+    shutdown(s).await;
+}
+
+/// W-17: a finished download carries the OS "downloaded" mark, so
+/// SmartScreen / Gatekeeper warn before it runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn downloaded_file_is_marked() {
+    let s = setup().await;
+    std::fs::write(s.root.join("tool.exe"), b"MZ not really").unwrap();
+    let out = s.work.join("tool.exe");
+    let stats = within(client::get(&s.client, &s.addr, "tool.exe", &out))
+        .await
+        .unwrap();
+    assert_eq!(stats.path, out);
+    assert!(client::is_risky_to_open("tool.exe"));
+    #[cfg(windows)]
+    {
+        assert!(stats.marked);
+        let mut stream = out.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        let mark = std::fs::read_to_string(std::path::PathBuf::from(stream)).unwrap();
+        assert!(mark.contains("ZoneId=3"), "{mark:?}");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert!(stats.marked);
+        let got = std::process::Command::new("/usr/bin/xattr")
+            .args(["-p", "com.apple.quarantine"])
+            .arg(&out)
+            .output()
+            .unwrap();
+        assert!(got.status.success(), "no quarantine attribute");
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    assert!(!stats.marked);
+    assert_eq!(std::fs::read(&out).unwrap(), b"MZ not really");
+    shutdown(s).await;
+}
+
+/// W-19: an agent that sends no SHA-256 is refused before any byte is
+/// written, so "verified" is never claimed for an unchecked file.
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_without_hash_is_refused() {
+    use pigeon_core::proto::write_frame;
+    let fake = local_endpoint(vec![ALPN.to_vec()]).await;
+    let addr = addr_of(&fake);
+    let server = fake.clone();
+    tokio::spawn(async move {
+        let Some(incoming) = server.accept().await else {
+            return;
+        };
+        let conn = incoming.await.unwrap();
+        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+        let _req: Request = read_frame(&mut recv).await.unwrap();
+        let header = Response::File {
+            size: 5,
+            offset: 0,
+            sha256: None,
+        };
+        write_frame(&mut send, &header).await.unwrap();
+        let _ = send.write_all(b"hello").await;
+        let _ = send.finish();
+        let _ = tokio::time::timeout(Duration::from_secs(5), conn.closed()).await;
+    });
+    let client_ep = local_endpoint(vec![]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("nohash.txt");
+    let err = within(client::get(&client_ep, &addr, "nohash.txt", &out))
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("no SHA-256"), "{err:#}");
+    assert!(!out.exists());
+    assert!(
+        !client::part_path(&out).exists(),
+        "an empty .part is cleaned up"
+    );
+    client_ep.close().await;
+    fake.close().await;
 }

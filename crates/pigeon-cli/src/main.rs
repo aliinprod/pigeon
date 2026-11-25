@@ -316,20 +316,37 @@ async fn run(
                 Some(out) => out,
                 None => default_out(&path)?,
             };
-            let out = client::free_path(&out);
-            let stats = client::get(endpoint, &agent.dial_addr(), &path, &out).await?;
+            // Resume a `.part` left by an earlier run, or start at a free
+            // name; an existing file is never replaced (W-18).
+            let (out, mode) = client::choose_out(&out);
+            let stats =
+                client::get_with_mode(endpoint, &agent.dial_addr(), &path, &out, mode, &|_| {})
+                    .await?;
             if stats.resumed_from > 0 {
                 println!("resumed from byte {}", stats.resumed_from);
             }
             println!(
                 "saved {}: {} bytes in {:.2}s ({:.3} MB/s, {}), sha256 {} OK",
-                out.display(),
+                display_safe(&stats.path.display().to_string()),
                 stats.size,
                 stats.elapsed.as_secs_f64(),
                 stats.mb_per_sec(),
                 stats.route,
                 stats.sha256
             );
+            if stats.path != out {
+                println!(
+                    "note: {} appeared during the download, so it was kept",
+                    out.display()
+                );
+            }
+            let name = stats.path.file_name().unwrap_or_default().to_string_lossy();
+            if client::is_risky_to_open(&name) {
+                println!(
+                    "careful: this is a program, script or shortcut; it came from the other \
+                     computer, so only open it if you trust that file"
+                );
+            }
         }
         Command::Agents | Command::Forget { .. } | Command::Whoami { .. } => {
             unreachable!("handled before going online")

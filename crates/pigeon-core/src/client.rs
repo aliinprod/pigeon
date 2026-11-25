@@ -11,11 +11,12 @@ use iroh::{
     Endpoint, EndpointAddr,
     endpoint::{Connection, ConnectionError, RecvStream, SendStream},
 };
-use tokio::io::AsyncWriteExt;
+use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::{
     ALPN,
-    agent::{close, sha256_file},
+    agent::close,
     proto::{Entry, Request, Response, read_frame, write_frame},
 };
 
@@ -76,10 +77,18 @@ pub struct GetStats {
     /// Bytes received over the network in this run.
     pub received: u64,
     pub elapsed: Duration,
-    /// Hex SHA-256 of the final file (verified against the agent's hash).
+    /// Hex SHA-256 of the final file. Always verified against the agent's
+    /// hash: a download without one fails (W-19).
     pub sha256: String,
     /// Path in use when the transfer finished.
     pub route: Route,
+    /// Where the file landed: the `out` asked for, or `name (n).ext` if a
+    /// file of that name appeared during the download (W-18).
+    pub path: PathBuf,
+    /// True if the OS "downloaded from elsewhere" mark was written (Mark of
+    /// the Web on Windows, quarantine on macOS); false on Linux, or where the
+    /// file system cannot hold it. See [`mark_downloaded`].
+    pub marked: bool,
 }
 
 impl GetStats {
@@ -145,84 +154,34 @@ pub async fn list(endpoint: &Endpoint, agent: &EndpointAddr, path: &str) -> Resu
     }
 }
 
-/// Path of the partial download for `out`.
-pub fn part_path(out: &Path) -> PathBuf {
-    let mut s = out.as_os_str().to_owned();
-    s.push(".part");
-    PathBuf::from(s)
+pub use crate::download::{
+    choose_out, free_path, is_risky_to_open, local_file_name, mark_downloaded, part_in_use,
+    part_path,
+};
+
+/// How [`get_with_mode`] treats `<out>.part`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Continue an existing `<out>.part` (a run that was cut off), or start
+    /// one if there is none. What [`get`] and [`get_with_progress`] do.
+    #[default]
+    Resume,
+    /// Start a new `<out>.part`; fail if one exists. For a new download at a
+    /// name from [`free_path`].
+    Fresh,
 }
 
-/// Returns `out` if nothing exists there yet, otherwise the first free
-/// `name (1).ext`, `name (2).ext`, ... next to it. Never overwrites.
-pub fn free_path(out: &Path) -> PathBuf {
-    if !exists(out) {
-        return out.to_path_buf();
-    }
-    let stem = out
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let ext = out
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default();
-    (1u32..)
-        .map(|n| out.with_file_name(format!("{stem} ({n}){ext}")))
-        .find(|p| !exists(p))
-        .expect("ran out of u32 file names")
-}
-
-/// Local file name for a remote `path`: its last component, made safe to
-/// create on any OS. The agent never chooses the local directory (SEC-15):
-/// `.`/`..` are refused (they would name a directory, or its parent); the
-/// characters Windows forbids (`<>:"|?*`, controls) become `_`, so a Mac name
-/// like `a:b.txt` cannot turn into an NTFS stream or a drive-relative path;
-/// trailing dots and spaces (which Windows drops) are removed; reserved
-/// device names (`CON`, `NUL`, `COM1`, ...) get a leading `_`.
-pub fn local_file_name(path: &str) -> Result<String> {
-    let name = path
-        .rsplit(['/', '\\'])
-        .find(|s| !s.is_empty())
-        .filter(|s| *s != "." && *s != "..")
-        .context("cannot derive a file name from this path")?;
-    let mut safe: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || "<>:\"|?*".contains(c) {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    while safe.ends_with(['.', ' ']) {
-        safe.pop();
-    }
-    if safe.is_empty() {
-        bail!("cannot derive a file name from this path");
-    }
-    let stem = safe.split('.').next().unwrap_or("").to_ascii_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&stem.as_str())
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && stem.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        safe.insert(0, '_');
-    }
-    Ok(safe)
-}
-
-/// Like `Path::exists`, but a dangling symlink also counts as taken.
-fn exists(p: &Path) -> bool {
-    p.symlink_metadata().is_ok()
-}
-
-/// Downloads `path` from the agent into `out`.
+/// Downloads `path` from the agent into `out` (resuming `<out>.part`).
 ///
-/// Data goes to `<out>.part` first; an existing `.part` file is resumed from
-/// its current size (or dropped, if the agent says it is longer than the
-/// file). After the transfer the SHA-256 of the whole file is checked against
-/// the agent's hash and the file is renamed to `out`.
+/// Data goes to `<out>.part` first, which this download locks so no other
+/// download can write it at the same time. An existing `.part` is resumed
+/// from its current size (or started over, if the agent says it is longer
+/// than the file). The agent must send the file's SHA-256 (W-19); the whole
+/// file is checked against it, and only then is the `.part` moved to `out`,
+/// or to the next free `name (n).ext` if `out` appeared meanwhile; an
+/// existing file is never replaced (W-18). [`GetStats::path`] says where it
+/// landed. Finally the file gets the OS "downloaded" mark
+/// ([`mark_downloaded`]).
 pub async fn get(
     endpoint: &Endpoint,
     agent: &EndpointAddr,
@@ -253,11 +212,65 @@ pub async fn get_with_progress(
     out: &Path,
     progress: &(dyn Fn(Progress) + Send + Sync),
 ) -> Result<GetStats> {
+    get_with_mode(endpoint, agent, path, out, Mode::Resume, progress).await
+}
+
+/// Like [`get_with_progress`], with an explicit [`Mode`] for the `.part`.
+pub async fn get_with_mode(
+    endpoint: &Endpoint,
+    agent: &EndpointAddr,
+    path: &str,
+    out: &Path,
+    mode: Mode,
+    progress: &(dyn Fn(Progress) + Send + Sync),
+) -> Result<GetStats> {
     let part = part_path(out);
-    let offset = match tokio::fs::metadata(&part).await {
-        Ok(m) => m.len(),
-        Err(_) => 0,
+    // Locked from here until it is closed below.
+    let file = crate::download::open_part(&part, mode == Mode::Fresh)?;
+    let result = transfer(endpoint, agent, path, file, &part, progress).await;
+    let (size, offset, received, elapsed, actual, route) = match result {
+        Ok(r) => r,
+        Err(e) => {
+            // Leave no empty `.part` behind (e.g. the agent refused us).
+            if std::fs::metadata(&part).is_ok_and(|m| m.len() == 0) {
+                let _ = std::fs::remove_file(&part);
+            }
+            return Err(e);
+        }
     };
+    let landed = crate::download::finish_part(&part, out)?;
+    // A file system without streams / xattrs (FAT, some shares) cannot hold
+    // the mark; the download itself is fine, and `marked` says so.
+    let marked = mark_downloaded(&landed).unwrap_or(false);
+    Ok(GetStats {
+        size,
+        resumed_from: offset,
+        received,
+        elapsed,
+        sha256: crate::hex(&actual),
+        route,
+        path: landed,
+        marked,
+    })
+}
+
+type Transferred = (u64, u64, u64, Duration, [u8; 32], Route);
+
+/// Asks for the file, writes it into the locked `.part` and checks its hash.
+/// The `.part` is closed (and so unlocked) when this returns.
+async fn transfer(
+    endpoint: &Endpoint,
+    agent: &EndpointAddr,
+    path: &str,
+    file: std::fs::File,
+    part: &Path,
+    progress: &(dyn Fn(Progress) + Send + Sync),
+) -> Result<Transferred> {
+    let offset = file
+        .metadata()
+        .with_context(|| format!("could not read {}", part.display()))?
+        .len();
+    let mut file = tokio::fs::File::from_std(file);
 
     let start = Instant::now();
     let req = Request::Get {
@@ -265,59 +278,58 @@ pub async fn get_with_progress(
         offset,
     };
     let (conn, _send, mut recv) = request(endpoint, agent, &req).await?;
-    let result = receive(&mut recv, &part, offset, progress)
+    let result = receive(&mut recv, &mut file, part, offset, progress)
         .await
         .map_err(|e| explain(&conn, e));
     let route = route(&conn);
     conn.close(0u32.into(), b"done");
-    let (size, offset, expected) = result?;
+    // Close the `.part` before it is moved or removed (Windows needs that).
+    drop(file.into_std().await);
+    let (size, offset, actual, expected) = result?;
     let elapsed = start.elapsed();
-
-    let actual = sha256_file(part.clone()).await?;
-    if let Some(expected) = expected
-        && actual != expected
-    {
+    if actual != expected {
         // A corrupt .part would never heal on resume, so drop it.
-        let _ = tokio::fs::remove_file(&part).await;
+        let _ = tokio::fs::remove_file(part).await;
         bail!(
             "SHA-256 mismatch: expected {}, got {}",
             crate::hex(&expected),
             crate::hex(&actual)
         );
     }
-    tokio::fs::rename(&part, out)
-        .await
-        .with_context(|| format!("could not move {} to {}", part.display(), out.display()))?;
-
-    Ok(GetStats {
-        size,
-        resumed_from: offset,
-        received: size - offset,
-        elapsed,
-        sha256: crate::hex(&actual),
-        route,
-    })
+    Ok((size, offset, size - offset, elapsed, actual, route))
 }
 
-/// Reads the header and the file bytes into `part`.
-/// Returns (size, effective offset, sha256).
+/// Reads the header and the file bytes into `file` (the `.part`, positioned
+/// at its start). Returns (size, effective offset, actual sha256, the
+/// agent's sha256). The hash covers the resumed bytes already on disk plus
+/// everything written now.
 async fn receive(
     recv: &mut RecvStream,
+    file: &mut tokio::fs::File,
     part: &Path,
     offset: u64,
     progress: &(dyn Fn(Progress) + Send + Sync),
-) -> Result<(u64, u64, Option<[u8; 32]>)> {
-    let (size, offset, sha256) = match read_frame(recv).await? {
+) -> Result<(u64, u64, [u8; 32], [u8; 32])> {
+    let (size, offset, expected) = match read_frame(recv).await? {
         Response::File {
             size,
             offset: o,
             sha256,
         } => {
+            // W-19: every pigeon-agent since Day 1 sends the hash, so a
+            // header without one is refused before any byte is written:
+            // "verified" must always be true.
+            let Some(sha256) = sha256 else {
+                bail!(
+                    "the agent sent no SHA-256 for this file, so it cannot be checked; \
+                     update pigeon on the other computer"
+                );
+            };
             if o == 0 && offset > 0 {
                 // Our .part is longer than the file: it is stale. Start over.
-                tokio::fs::remove_file(part)
+                file.set_len(0)
                     .await
-                    .with_context(|| format!("could not remove stale {}", part.display()))?;
+                    .with_context(|| format!("could not empty stale {}", part.display()))?;
             } else if o != offset {
                 bail!("agent answered with offset {o}, expected {offset}");
             }
@@ -330,18 +342,22 @@ async fn receive(
         other => bail!("unexpected response: {other:?}"),
     };
 
-    let mut opts = tokio::fs::OpenOptions::new();
-    opts.create(true).append(true);
-    // Fetched work files are readable by the home user only (SEC-14). On
-    // Windows the file inherits the ACL of the folder it is saved in.
-    #[cfg(unix)]
-    opts.mode(0o600);
-    let mut file = opts
-        .open(part)
-        .await
-        .with_context(|| format!("could not open {}", part.display()))?;
-    let expected = size - offset;
     let mut buf = vec![0u8; 256 * 1024];
+    let mut hasher = Sha256::new();
+    // Hash the bytes we resume from, through the same (locked) handle.
+    file.seek(std::io::SeekFrom::Start(0)).await?;
+    let mut left = offset;
+    while left > 0 {
+        let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        let n = file.read(&mut buf[..want]).await?;
+        if n == 0 {
+            bail!("{} got shorter while resuming", part.display());
+        }
+        hasher.update(&buf[..n]);
+        left -= n as u64;
+    }
+
+    let expected_len = size - offset;
     let mut got = 0u64;
     let report = |got: u64| {
         progress(Progress {
@@ -354,73 +370,19 @@ async fn receive(
     // `RecvStream::read` returns `None` once the agent finished the stream.
     while let Some(n) = recv.read(&mut buf).await? {
         got += n as u64;
-        if got > expected {
+        if got > expected_len {
             bail!("agent sent more data than announced");
         }
         file.write_all(&buf[..n]).await?;
+        hasher.update(&buf[..n]);
         report(got);
     }
     file.flush().await?;
     file.sync_all().await?;
-    if got != expected {
-        bail!("transfer interrupted: got {got} of {expected} bytes (run again to resume)");
+    if got != expected_len {
+        bail!("transfer interrupted: got {got} of {expected_len} bytes (run again to resume)");
     }
-    Ok((size, offset, sha256))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn free_path_keeps_a_new_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("report.pdf");
-        assert_eq!(free_path(&out), out);
-    }
-
-    #[test]
-    fn free_path_numbers_taken_names() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("report.pdf");
-        std::fs::write(&out, b"1").unwrap();
-        assert_eq!(free_path(&out), dir.path().join("report (1).pdf"));
-        std::fs::write(dir.path().join("report (1).pdf"), b"2").unwrap();
-        assert_eq!(free_path(&out), dir.path().join("report (2).pdf"));
-    }
-
-    #[test]
-    fn free_path_without_extension_and_dotfiles() {
-        let dir = tempfile::tempdir().unwrap();
-        let plain = dir.path().join("Makefile");
-        std::fs::write(&plain, b"").unwrap();
-        assert_eq!(free_path(&plain), dir.path().join("Makefile (1)"));
-        let dot = dir.path().join(".env");
-        std::fs::write(&dot, b"").unwrap();
-        assert_eq!(free_path(&dot), dir.path().join(".env (1)"));
-    }
-
-    #[test]
-    fn local_file_name_is_safe_on_every_os() {
-        assert_eq!(local_file_name("Reports/q4.pdf").unwrap(), "q4.pdf");
-        assert_eq!(local_file_name("a\\b\\c.txt").unwrap(), "c.txt");
-        assert_eq!(local_file_name("dir/").unwrap(), "dir");
-        assert_eq!(local_file_name("a:b.txt").unwrap(), "a_b.txt");
-        assert_eq!(local_file_name("x\u{1b}y?.txt").unwrap(), "x_y_.txt");
-        assert_eq!(local_file_name("name. .").unwrap(), "name");
-        assert_eq!(local_file_name("CON.txt").unwrap(), "_CON.txt");
-        assert_eq!(local_file_name("com1").unwrap(), "_com1");
-        assert_eq!(local_file_name("COM10").unwrap(), "COM10");
-        for bad in ["", "/", "..", "a/..", ".", "...", "  "] {
-            assert!(local_file_name(bad).is_err(), "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn free_path_treats_a_directory_as_taken() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("photos");
-        std::fs::create_dir(&out).unwrap();
-        assert_eq!(free_path(&out), dir.path().join("photos (1)"));
-    }
+    let mut actual = [0u8; 32];
+    actual.copy_from_slice(&hasher.finalize());
+    Ok((size, offset, actual, expected))
 }
