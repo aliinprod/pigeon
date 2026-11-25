@@ -864,9 +864,10 @@ pub fn share_running(config_dir: &Path) -> bool {
 }
 
 /// The one line `pigeon ls`/`get`/`pair` print while a share runs on this
-/// computer with the same key (TH-28, R14).
-pub const SHARE_RUNNING_WARNING: &str = "note: `pigeon-agent share` is running on this computer \
-     with the same key; while this command runs, other computers can reach that share only \
+/// computer with the same key (TH-28, R14). Either the app or
+/// `pigeon-agent share` can hold `share.lock`, so it names neither (W-23).
+pub const SHARE_RUNNING_WARNING: &str = "note: another Pigeon share (the app or pigeon-agent) is \
+     running on this computer with the same key; while this command runs, other computers can reach that share only \
      over direct connections, not through the relay";
 
 /// How often [`watch`] re-reads the allow-list file.

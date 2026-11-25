@@ -2234,6 +2234,7 @@ dependencies = [
  "hkdf 0.13.0",
  "hmac 0.13.0",
  "iroh",
+ "libc",
  "postcard",
  "proptest",
  "security-framework",
