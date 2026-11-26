@@ -212,6 +212,8 @@ button { font: inherit; color: inherit; }
 .xfer.err .fico { border-color: var(--signal); color: var(--signal); }
 .verified { display: inline-flex; align-items: center; gap: 4px; color: var(--text); font-weight: 500; }
 .verified .ico { width: 14px; height: 14px; stroke-width: 2.2; }
+.risky { display: inline-flex; align-items: center; gap: 4px; }
+.risky .ico { width: 14px; height: 14px; }
 .kv { display: grid; grid-template-columns: 200px 1fr; gap: 14px 18px; align-items: center; }
 .kv > .k { color: var(--text-2); text-align: right; }
 .kv > .sep { grid-column: 1 / -1; border-top: 1px solid var(--line); margin: 2px 0; }

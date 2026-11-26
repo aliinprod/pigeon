@@ -281,8 +281,9 @@ async fn two_apps_pair_and_get_both_ways_on_one_endpoint_each() {
         t.size, t.route
     );
     assert_eq!(t.sha256.as_deref(), Some(want.as_str()));
-    // W-19: never claimed as verified while the core cannot say so.
-    assert_ne!(t.verified, Some(true), "core-file-safety not in yet");
+    // W-19: the core compared the hash, so the badge may say so.
+    assert!(t.verified, "a finished transfer is verified");
+    assert!(!t.risky);
     assert_eq!(got, want);
     assert_eq!(t.done, t.size);
     assert_eq!(
@@ -477,27 +478,101 @@ async fn resume_never_races_an_active_transfer_on_the_same_file() {
     let t1 = wait_done(&b, first).await;
     assert_eq!(t1.state, TransferState::Failed);
 
-    // Shared again; a new get of the same file starts on the same name.
+    // Shared again. A new get of the same file never takes the name of the
+    // failed one (it may still be resumed), so the two never share a `.part`
+    // (W-18): it becomes `big (1).bin`.
     a.backend.add_folder(&share).unwrap();
     let second = b.backend.get(&a_id, "Big/big.bin").unwrap();
     let resumed = b.backend.resume(first);
     let t2 = wait_done(&b, second).await;
-    if resumed.is_ok() {
-        let t1 = wait_done(&b, first).await;
-        eprintln!(
-            "resume raced: t1={:?}/{:?} t2={:?}/{:?}",
-            t1.state, t1.error, t2.state, t2.error
-        );
-    }
-    assert!(
-        resumed.is_err(),
-        "resume must refuse while another transfer writes {}",
-        t2.file_name
-    );
     assert_eq!(t2.state, TransferState::Done, "{:?}", t2.error);
+    assert_eq!(t2.file_name, "big (1).bin");
     let want = pigeon_core::hex(&sha256_file(src.clone()).await.unwrap());
     let got = b.backend.finished_file(second).unwrap();
-    assert_eq!(pigeon_core::hex(&sha256_file(got).await.unwrap()), want);
+    assert_eq!(
+        pigeon_core::hex(&sha256_file(got.clone()).await.unwrap()),
+        want
+    );
+    // Either resume was refused, or it wrote its own file, and that one is
+    // correct too. Never two writers on one `.part`, never a hash mismatch.
+    if resumed.is_ok() {
+        let t1 = wait_done(&b, first).await;
+        assert_eq!(t1.state, TransferState::Done, "{:?}", t1.error);
+        let got1 = b.backend.finished_file(first).unwrap();
+        assert_ne!(got1, got);
+        assert_eq!(pigeon_core::hex(&sha256_file(got1).await.unwrap()), want);
+    }
+
+    stop(a).await;
+    stop(b).await;
+}
+
+/// W-17 / W-18 / W-19 in the app: a file that could run code is never
+/// handed to the OS to open (Show in folder still works), names reach the
+/// webview through `display_safe` (no bidi trick), and a target that
+/// appeared during the download makes the copy land as `name (1).ext`, which
+/// the transfer then shows and opens.
+#[tokio::test(flavor = "multi_thread")]
+async fn risky_files_are_not_opened_and_landed_names_are_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = node(dir.path(), "Sharer").await;
+    let b = node(dir.path(), "Getter").await;
+    let share = dir.path().join("Drop");
+    std::fs::create_dir_all(&share).unwrap();
+    // A harmless script behind a double extension. (Windows Defender blocks
+    // any file whose *name* holds U+202E, so the bidi part is tested on a
+    // plain text file below, with an isolate and a zero-width space.)
+    let script = "report.pdf.bat";
+    std::fs::write(share.join(script), b"@echo off\r\nrem harmless\r\n").unwrap();
+    let tricky = "notes\u{2066}\u{200b}.txt";
+    std::fs::write(share.join(tricky), b"hello").unwrap();
+    write_file(&share.join("big.bin"), 48 * 1024 * 1024);
+    a.backend.add_folder(&share).unwrap();
+    pair(&a, &b, "Getter", "Sharer").await;
+    let a_id = a.backend.id().to_string();
+
+    // --- names reach the webview display_safe ----------------------------
+    let id = b.backend.get(&a_id, &format!("Drop/{tricky}")).unwrap();
+    let t = wait_done(&b, id).await;
+    assert_eq!(t.state, TransferState::Done, "{:?}", t.error);
+    for s in [&t.file_name, &t.wanted_name, &t.remote_path] {
+        assert!(
+            !s.contains(['\u{2066}', '\u{200b}']),
+            "invisible / bidi character reaches the UI: {s:?}"
+        );
+    }
+    assert!(!t.risky);
+    b.backend.file_to_open(id).unwrap();
+
+    // --- risky: Show in folder only --------------------------------------
+    let id = b.backend.get(&a_id, &format!("Drop/{script}")).unwrap();
+    let t = wait_done(&b, id).await;
+    assert_eq!(t.state, TransferState::Done, "{:?}", t.error);
+    assert!(t.verified);
+    assert!(t.risky, "report.pdf.bat is a script");
+    // Refused in the backend, before anything is handed to the OS opener.
+    let refused = b.backend.file_to_open(id).unwrap_err();
+    assert_eq!(format!("{refused:#}"), pigeon_app::RISKY_TO_OPEN);
+    assert!(
+        b.backend.finished_file(id).unwrap().is_file(),
+        "Show in folder"
+    );
+
+    // --- the target appears while the download runs ----------------------
+    let id = b.backend.get(&a_id, "Drop/big.bin").unwrap();
+    let squatter = dir.path().join("Getter-downloads").join("big.bin");
+    std::fs::write(&squatter, b"not the download").unwrap();
+    let t = wait_done(&b, id).await;
+    assert_eq!(t.state, TransferState::Done, "{:?}", t.error);
+    assert!(t.verified && !t.risky);
+    assert_eq!(t.file_name, "big (1).bin", "shows where it landed");
+    let landed = b.backend.file_to_open(id).unwrap();
+    assert_eq!(landed, squatter.with_file_name("big (1).bin"));
+    assert_eq!(
+        pigeon_core::hex(&sha256_file(landed).await.unwrap()),
+        pigeon_core::hex(&sha256_file(share.join("big.bin")).await.unwrap())
+    );
+    assert_eq!(std::fs::read(&squatter).unwrap(), b"not the download");
 
     stop(a).await;
     stop(b).await;

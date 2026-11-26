@@ -122,3 +122,7 @@ plus `win-window-native-dark.png` (real window frame) and
 folder that holds Pigeon's settings, the "SHA-256 of this copy" label). These
 are `app/ui` rendered in headless Edge with a stub in place of Tauri IPC; the
 message texts are the backend's (`ALREADY_SHARING`, `friendly_error`).
+`screenshots/win-fix2-transfers-risky-*` (app fixes 2, same method): a file
+that could run code offers Show in folder only (`RISKY_TO_OPEN`, W-17), every
+finished copy says "SHA-256 verified", and a copy that landed as
+`report (1).bin` shows that name.

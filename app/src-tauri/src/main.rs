@@ -182,7 +182,8 @@ fn clear_finished(state: State<'_, AppState>) -> Res<()> {
 
 #[tauri::command]
 fn open_file(app: tauri::AppHandle, state: State<'_, AppState>, id: u64) -> Res<()> {
-    let path = be(&state)?.finished_file(id).map_err(err)?;
+    // Refuses programs, scripts, shortcuts, ... before the OS sees them (W-17).
+    let path = be(&state)?.file_to_open(id).map_err(err)?;
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
