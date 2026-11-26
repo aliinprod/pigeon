@@ -59,6 +59,10 @@ pub const ALREADY_SHARING: &str = "Pigeon is already running on this computer: e
      Pigeon app, or `pigeon-agent share` in a terminal. Only one of them can share at a time. \
      Quit the other one, then open Pigeon again.";
 
+/// Open refuses files that could run code (W-17).
+pub const RISKY_TO_OPEN: &str =
+    "This file type can run code. Pigeon won't open it; use Show in folder.";
+
 /// How the backend starts.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -193,13 +197,15 @@ pub struct TransferView {
     pub resumed_from: u64,
     pub mb_per_sec: f64,
     pub route: Option<String>,
-    /// SHA-256 of the local copy (always computed after a get).
+    /// SHA-256 of the local copy.
     pub sha256: Option<String>,
-    /// Whether that hash was checked against the one the other computer
-    /// sent (W-19): `Some(true)` checked and equal, `Some(false)` nothing
-    /// to check against, `None` not known. The UI says "SHA-256 verified"
-    /// only for `Some(true)`.
-    pub verified: Option<bool>,
+    /// The copy's SHA-256 was checked against the one the other computer
+    /// sent. True for every finished transfer: the core refuses a download
+    /// without a hash (W-19). The UI says "SHA-256 verified" only when true.
+    pub verified: bool,
+    /// Opening this file could run code (program, script, shortcut, ...):
+    /// the app offers Show in folder only (W-17).
+    pub risky: bool,
     pub error: Option<String>,
     pub started_at: u64,
     pub finished_at: Option<u64>,
@@ -210,6 +216,8 @@ struct Transfer {
     computer: EndpointId,
     /// The remote path exactly as the agent listed it.
     path: String,
+    /// Where it is written; after it finished, where it landed (the core
+    /// picks `name (n).ext` if `out` appeared meanwhile).
     out: PathBuf,
     started: Instant,
 }
@@ -497,16 +505,45 @@ fn load_folders(dir: &Path) -> Result<Vec<FolderEntry>> {
     }
 }
 
-/// Whether the core checked the local copy's SHA-256 against the one the
-/// other computer sent (W-19).
-///
-/// TODO(core-file-safety): today `client::GetStats` does not say. The core
-/// skips the check when the agent sends no hash (R7), and `GetStats::sha256`
-/// is the local hash either way, so the app cannot tell a checked copy from
-/// an unchecked one: report "not known" and never claim "verified". Use the
-/// flag from Anvil's `core-file-safety` change once it lands.
-fn sha256_verified(_stats: &client::GetStats) -> Option<bool> {
-    None
+/// A download-folder name for `wanted` that nothing uses: not on disk, no
+/// `.part` on disk or locked by another download, and not the target of a
+/// transfer here that has not finished (W-18). Same `name (n).ext` scheme
+/// as the core's [`client::free_path`].
+fn free_name(dir: &Path, wanted: &str, transfers: &[Transfer]) -> PathBuf {
+    let base = dir.join(wanted);
+    let stem = base
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = base
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    std::iter::once(base.clone())
+        .chain((1u32..).map(|n| base.with_file_name(format!("{stem} ({n}){ext}"))))
+        .find(|p| {
+            client::free_path(p) == *p
+                && !client::part_in_use(p)
+                && !transfers
+                    .iter()
+                    .any(|t| t.view.state != TransferState::Done && t.out == *p)
+        })
+        .expect("ran out of u32 file names")
+}
+
+/// W-17: judged on the name the other computer sent and on the local file
+/// name it landed as; either one being risky is enough.
+fn is_risky(remote_path: &str, local: &Path) -> bool {
+    client::is_risky_to_open(remote_path)
+        || local
+            .file_name()
+            .is_some_and(|n| client::is_risky_to_open(&n.to_string_lossy()))
+}
+
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|n| pigeon_core::display_safe(&n.to_string_lossy()))
+        .unwrap_or_default()
 }
 
 fn shared(folders: &[FolderEntry]) -> Vec<SharedFolder> {
@@ -1045,39 +1082,29 @@ impl Backend {
     }
 
     /// Starts fetching `path` from a paired computer into the download
-    /// folder. Never overwrites: a taken name becomes `name (1).ext`; a
-    /// `.part` left by an earlier attempt is resumed.
+    /// folder, as a new file. Never overwrites and never joins another
+    /// download's `.part`: a taken name becomes `name (1).ext` (W-18). A
+    /// failed transfer continues with [`Backend::resume`].
     pub fn get(self: &Arc<Self>, computer: &str, path: &str) -> Result<u64> {
         check_len("path", path, MAX_PATH_INPUT)?;
         let (agent, _) = self.computer(computer)?;
         let wanted = client::local_file_name(path)?;
         config::ensure_private_dir(&self.download_dir)?;
-        let base = self.download_dir.join(&wanted);
         let mut transfers = self.transfers.lock().expect("transfers poisoned");
-        let out = client::free_path(&base);
-        anyhow::ensure!(
-            !transfers
-                .iter()
-                .any(|t| t.view.state == TransferState::Active && t.out == out),
-            "{wanted} is already downloading"
-        );
+        let out = free_name(&self.download_dir, &wanted, &transfers);
         let id = {
             let mut n = self.next_transfer.lock().expect("ids poisoned");
             *n += 1;
             *n - 1
         };
-        let file_name = out
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| wanted.clone());
         transfers.push(Transfer {
             view: TransferView {
                 id,
                 computer: agent.id.to_string(),
                 computer_name: pigeon_core::display_safe(&agent.name),
                 remote_path: pigeon_core::display_safe(path),
-                file_name,
-                wanted_name: wanted,
+                file_name: file_name_of(&out),
+                wanted_name: pigeon_core::display_safe(&wanted),
                 state: TransferState::Active,
                 size: 0,
                 done: 0,
@@ -1085,7 +1112,8 @@ impl Backend {
                 mb_per_sec: 0.0,
                 route: None,
                 sha256: None,
-                verified: None,
+                verified: false,
+                risky: is_risky(path, &out),
                 error: None,
                 started_at: pair::now_secs(),
                 finished_at: None,
@@ -1096,11 +1124,12 @@ impl Backend {
             started: Instant::now(),
         });
         drop(transfers);
-        self.spawn_transfer(id, path.to_string());
+        self.spawn_transfer(id, path.to_string(), client::Mode::Fresh);
         Ok(id)
     }
 
-    /// Runs a failed transfer again; it resumes from its `.part` file.
+    /// Runs a failed transfer again; it continues its `.part` file. If its
+    /// name was taken meanwhile, the file lands as `name (n).ext`.
     pub fn resume(self: &Arc<Self>, id: u64) -> Result<()> {
         let path = {
             let mut transfers = self.transfers.lock().expect("transfers poisoned");
@@ -1117,31 +1146,27 @@ impl Backend {
                 t.view.state == TransferState::Failed,
                 "not a failed transfer"
             );
+            // Another transfer here, or another program, writes the `.part`.
             anyhow::ensure!(
-                !busy,
+                !busy && !client::part_in_use(&t.out),
                 "{} is downloading again; wait for it to finish",
-                t.view.file_name
-            );
-            anyhow::ensure!(
-                t.out.symlink_metadata().is_err(),
-                "{} exists now; get it again instead",
                 t.view.file_name
             );
             t.view.state = TransferState::Active;
             t.view.error = None;
-            t.view.verified = None;
+            t.view.verified = false;
             t.view.finished_at = None;
             t.started = Instant::now();
             t.path.clone()
         };
-        self.spawn_transfer(id, path);
+        self.spawn_transfer(id, path, client::Mode::Resume);
         Ok(())
     }
 
-    fn spawn_transfer(self: &Arc<Self>, id: u64, path: String) {
+    fn spawn_transfer(self: &Arc<Self>, id: u64, path: String, mode: client::Mode) {
         let me = self.clone();
         self.rt.spawn(async move {
-            let result = me.run_transfer(id, &path).await;
+            let result = me.run_transfer(id, &path, mode).await;
             let mut transfers = me.transfers.lock().expect("transfers poisoned");
             let Some(t) = transfers.iter_mut().find(|t| t.view.id == id) else {
                 return;
@@ -1155,8 +1180,13 @@ impl Backend {
                     t.view.resumed_from = stats.resumed_from;
                     t.view.mb_per_sec = stats.mb_per_sec();
                     t.view.route = Some(stats.route.to_string());
-                    t.view.verified = sha256_verified(&stats);
+                    // The core only returns Ok after comparing the hash.
+                    t.view.verified = true;
                     t.view.sha256 = Some(stats.sha256);
+                    // It may have landed as `name (n).ext`: show that one.
+                    t.view.file_name = file_name_of(&stats.path);
+                    t.view.risky = is_risky(&t.path, &stats.path);
+                    t.out = stats.path;
                 }
                 Err(e) => {
                     t.view.state = TransferState::Failed;
@@ -1169,7 +1199,12 @@ impl Backend {
         });
     }
 
-    async fn run_transfer(&self, id: u64, path: &str) -> Result<client::GetStats> {
+    async fn run_transfer(
+        &self,
+        id: u64,
+        path: &str,
+        mode: client::Mode,
+    ) -> Result<client::GetStats> {
         let (computer, out) = {
             let transfers = self.transfers.lock().expect("transfers poisoned");
             let t = transfers
@@ -1189,7 +1224,8 @@ impl Backend {
                 t.view.mb_per_sec = (p.done - p.resumed_from) as f64 / 1e6 / secs;
             }
         };
-        let result = client::get_with_progress(&self.endpoint, &addr, path, &out, &progress).await;
+        let result =
+            client::get_with_mode(&self.endpoint, &addr, path, &out, mode, &progress).await;
         self.online
             .lock()
             .expect("online poisoned")
@@ -1216,6 +1252,23 @@ impl Backend {
         anyhow::ensure!(t.view.state == TransferState::Done, "not finished yet");
         anyhow::ensure!(t.out.is_file(), "the file was moved or deleted");
         Ok(t.out.clone())
+    }
+
+    /// The local file of a finished transfer, for Open: refused for files
+    /// that could run code (W-17), which only get Show in folder. Checked
+    /// here, before anything is handed to the OS to open.
+    pub fn file_to_open(&self, id: u64) -> Result<PathBuf> {
+        let path = self.finished_file(id)?;
+        let remote = {
+            let transfers = self.transfers.lock().expect("transfers poisoned");
+            transfers
+                .iter()
+                .find(|t| t.view.id == id)
+                .map(|t| t.path.clone())
+                .unwrap_or_default()
+        };
+        anyhow::ensure!(!is_risky(&remote, &path), RISKY_TO_OPEN);
+        Ok(path)
     }
 
     /// Renames this computer (what it calls itself).
@@ -1291,6 +1344,21 @@ mod tests {
             PairOutcome::Failed { message } => assert_eq!(message, "Pairing step timed out"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// W-17: names shown in Transfers are display_safe even if a local
+    /// name ever kept a bidi character; risky names are caught on either
+    /// the remote or the local name.
+    #[test]
+    fn transfer_names_are_display_safe_and_risky_is_checked_both_ways() {
+        let shown = file_name_of(Path::new("dl/invoice\u{202e}fdp.exe"));
+        assert!(!shown.contains('\u{202e}'), "{shown:?}");
+        assert!(is_risky("Drop/report.pdf.exe", Path::new("dl/report.pdf")));
+        assert!(is_risky("Drop/report.pdf", Path::new("dl/report.lnk")));
+        assert!(!is_risky(
+            "Drop/setup.exe.txt",
+            Path::new("dl/setup.exe.txt")
+        ));
     }
 
     /// N3: what the Browse banner and Transfers show.

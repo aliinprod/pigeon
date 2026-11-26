@@ -320,20 +320,22 @@
   }
 
   // W-19: "verified" only when the backend says the copy's hash was checked
-  // against the one the other computer sent.
+  // against the one the other computer sent (always, for a finished copy).
   function verifiedBadge(/** @type {any} */ x) {
     if (x.verified === true) return `<span class="verified" title="SHA-256 ${esc(x.sha256)}">${ic('check')}SHA-256 verified</span>`;
-    if (x.verified === false) return `<span class="attn-text" title="SHA-256 of this copy: ${esc(x.sha256)}">Not verified: ${esc(x.computer_name)} sent no checksum</span>`;
     return `<span title="SHA-256 of this copy: ${esc(x.sha256)}">SHA-256 of this copy</span>`;
   }
+
+  // W-17: files that could run code get Show in folder only.
+  const RISKY = 'This file type can run code. Pigeon won’t open it; use Show in folder.';
 
   function xferRow(/** @type {any} */ x) {
     const route = x.route === 'relay' ? '<span class="route relay" title="Encrypted end to end; the relay can’t read it. Slower, not less safe.">Relay · slower</span>' : x.route === 'direct' ? '<span class="route">Direct</span>' : '';
     if (x.state === 'done') {
       return `<div class="xfer"><div class="fico">${ic('file')}</div>
         <div class="row wrap"><span class="h3 trunc">${esc(x.file_name)}</span><span class="small muted mono">${size(x.size)}</span></div>
-        <div class="acts">${B('Open', { k: 'sm', i: 'open', act: 'open-file', data: { id: x.id } })}${B('Show in folder', { k: 'sm', i: 'folder', act: 'show-file', data: { id: x.id } })}</div>
-        <div class="meta">${verifiedBadge(x)}${route}<span>from ${esc(x.computer_name)}</span><span>Done ${esc(when(x.finished_at))}</span>${x.resumed_from ? `<span>resumed at ${size(x.resumed_from)}</span>` : ''}
+        <div class="acts">${x.risky ? '' : B('Open', { k: 'sm', i: 'open', act: 'open-file', data: { id: x.id } })}${B('Show in folder', { k: 'sm', i: 'folder', act: 'show-file', data: { id: x.id } })}</div>
+        <div class="meta">${x.risky ? `<span class="attn-text risky">${ic('shield')}${RISKY}</span>` : ''}${verifiedBadge(x)}${route}<span>from ${esc(x.computer_name)}</span><span>Done ${esc(when(x.finished_at))}</span>${x.resumed_from ? `<span>resumed at ${size(x.resumed_from)}</span>` : ''}
           ${x.file_name !== x.wanted_name ? `<span>Saved as a new copy: <span class="mono">${esc(x.wanted_name)}</span> already existed</span>` : ''}<span class="mono sha">${esc(String(x.sha256).slice(0, 16))}…</span></div></div>`;
     }
     if (x.state === 'failed') {
